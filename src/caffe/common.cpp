@@ -106,7 +106,7 @@ void* Caffe::RNG::generator() {
 
 Caffe::Caffe()
     : cublas_handle_(NULL), curand_generator_(NULL), random_generator_(),
-    mode_(Caffe::CPU),
+    cusparse_handle_(NULL), cusparse_matdescr_(NULL), mode_(Caffe::CPU),
     solver_count_(1), solver_rank_(0), multiprocess_(false) {
   // Try to create a cublas handler, and report an error if failed (but we will
   // keep the program running as one might just want to run CPU code).
@@ -120,6 +120,16 @@ Caffe::Caffe()
       != CURAND_STATUS_SUCCESS) {
     LOG(ERROR) << "Cannot create Curand generator. Curand won't be available.";
   }
+	// cxh
+  if (cusparseCreate(&cusparse_handle_) != CUSPARSE_STATUS_SUCCESS) {
+        LOG(ERROR) << "Cannot create Cusparse handle. Cusparse won't be available.";
+  }
+  if (cusparseCreateMatDescr(&cusparse_matdescr_) != CUSPARSE_STATUS_SUCCESS) {
+      LOG(ERROR) << "Cannot create Cusparse matrix descriptor.";
+  }else{
+	  cusparseSetMatType(cusparse_matdescr_,CUSPARSE_MATRIX_TYPE_GENERAL);
+	  cusparseSetMatIndexBase(cusparse_matdescr_,CUSPARSE_INDEX_BASE_ZERO);
+  }
 }
 
 Caffe::~Caffe() {
@@ -127,6 +137,9 @@ Caffe::~Caffe() {
   if (curand_generator_) {
     CURAND_CHECK(curandDestroyGenerator(curand_generator_));
   }
+	// cxh
+	if (cusparse_handle_) CUSPARSE_CHECK(cusparseDestroy(cusparse_handle_));
+	if (cusparse_matdescr_) CUSPARSE_CHECK(cusparseDestroyMatDescr(cusparse_matdescr_));
 }
 
 void Caffe::set_random_seed(const unsigned int seed) {
@@ -160,11 +173,19 @@ void Caffe::SetDevice(const int device_id) {
   if (Get().curand_generator_) {
     CURAND_CHECK(curandDestroyGenerator(Get().curand_generator_));
   }
+	// cxh
+	if (Get().cusparse_handle_) CUSPARSE_CHECK(cusparseDestroy(Get().cusparse_handle_));
+	if (Get().cusparse_matdescr_) CUSPARSE_CHECK(cusparseDestroyMatDescr(Get().cusparse_matdescr_));
+
   CUBLAS_CHECK(cublasCreate(&Get().cublas_handle_));
   CURAND_CHECK(curandCreateGenerator(&Get().curand_generator_,
       CURAND_RNG_PSEUDO_DEFAULT));
   CURAND_CHECK(curandSetPseudoRandomGeneratorSeed(Get().curand_generator_,
       cluster_seedgen()));
+	// cxh
+	CUSPARSE_CHECK(cusparseCreate(&Get().cusparse_handle_));
+	CUSPARSE_CHECK(cusparseCreateMatDescr(&Get().cusparse_matdescr_));
+	Get().cusparse_initialize_matsescr();
 }
 
 void Caffe::DeviceQuery() {
@@ -318,6 +339,33 @@ const char* curandGetErrorString(curandStatus_t error) {
     return "CURAND_STATUS_INTERNAL_ERROR";
   }
   return "Unknown curand status";
+}
+
+// cxh
+const char* cusparseGetErrorString(cusparseStatus_t error) {
+  switch (error) {
+  case CUSPARSE_STATUS_SUCCESS:
+    return "CUSPARSE_STATUS_SUCCESS";
+  case CUSPARSE_STATUS_NOT_INITIALIZED:
+    return "CUSPARSE_STATUS_NOT_INITIALIZED";
+  case CUSPARSE_STATUS_ALLOC_FAILED:
+    return "CUSPARSE_STATUS_ALLOC_FAILED";
+  case CUSPARSE_STATUS_INVALID_VALUE:
+    return "CUSPARSE_STATUS_INVALID_VALUE";
+  case CUSPARSE_STATUS_ARCH_MISMATCH:
+    return "CUSPARSE_STATUS_ARCH_MISMATCH";
+  case CUSPARSE_STATUS_MAPPING_ERROR:
+    return "CUSPARSE_STATUS_MAPPING_ERROR";
+  case CUSPARSE_STATUS_EXECUTION_FAILED:
+    return "CUSPARSE_STATUS_EXECUTION_FAILED";
+  case CUSPARSE_STATUS_INTERNAL_ERROR:
+    return "CUSPARSE_STATUS_INTERNAL_ERROR";
+  case CUSPARSE_STATUS_MATRIX_TYPE_NOT_SUPPORTED:
+      return "CUSPARSE_STATUS_MATRIX_TYPE_NOT_SUPPORTED";
+  case CUSPARSE_STATUS_ZERO_PIVOT:
+        return "CUSPARSE_STATUS_ZERO_PIVOT";
+  }
+  return "Unknown cusparse status";
 }
 
 #endif  // CPU_ONLY

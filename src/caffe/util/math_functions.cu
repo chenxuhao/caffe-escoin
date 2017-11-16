@@ -42,6 +42,57 @@ void caffe_gpu_gemm<double>(const CBLAS_TRANSPOSE TransA,
       N, M, K, &alpha, B, ldb, A, lda, &beta, C, N));
 }
 
+// cxh
+template <>
+void caffe_gpu_sparse_mmcsr<float>(const int M, const int N, const int K,
+    const int nnz, const float alpha,
+    const float* A_nonzero_buf, const int* A_idx_pointer_buf, const int* A_nonzero_idx_buf,
+		const float* B, const float beta, float* C) {
+	// This function performs sparse matrix (A) dense matrix (B) multiplication
+	CUSPARSE_CHECK(cusparseScsrmm(Caffe::cusparse_handle(), CUSPARSE_OPERATION_NON_TRANSPOSE,
+			M, N, K, nnz, &alpha,	Caffe::cusparse_matdescr(), A_nonzero_buf, 
+			A_idx_pointer_buf, A_nonzero_idx_buf, B, K, &beta, C, M));
+}
+
+template <>
+void caffe_gpu_sparse_mmcsr<double>(const int M, const int N, const int K,
+    const int nnz, const double alpha,
+    const double* A_nonzero_buf, const int* A_idx_pointer_buf, const int* A_nonzero_idx_buf,
+    const double* B, const double beta, double* C) {
+	CUSPARSE_CHECK(cusparseDcsrmm(Caffe::cusparse_handle(), CUSPARSE_OPERATION_NON_TRANSPOSE,
+			M, N, K, nnz, &alpha, Caffe::cusparse_matdescr(), A_nonzero_buf, 
+			A_idx_pointer_buf, A_nonzero_idx_buf, B, K, &beta, C, M));
+}
+
+template <>
+void caffe_gpu_sparse_dense2csr<float>(const int M, const int N, const float* A, int* nnzPerRow,
+    float* A_nonzero_buf, int* A_idx_pointer_buf, int* A_nonzero_idx_buf, int *nnz_total) {
+	// This function computes the number of nonzero elements per row or column 
+	// and the total number of nonzero elements in a dense matrix.
+	CUSPARSE_CHECK(cusparseSnnz(Caffe::cusparse_handle(),
+			CUSPARSE_DIRECTION_ROW, M, N,
+			Caffe::cusparse_matdescr(), A, M,
+			nnzPerRow, nnz_total));
+
+  // This function converts the matrix A in dense format into a sparse matrix in CSR format.
+	CUSPARSE_CHECK(cusparseSdense2csr(Caffe::cusparse_handle(),
+			M, N, Caffe::cusparse_matdescr(), A, M, nnzPerRow,
+			A_nonzero_buf, A_nonzero_idx_buf, A_idx_pointer_buf));
+}
+
+template <>
+void caffe_gpu_sparse_dense2csr<double>(const int M, const int N, const double* A, int* nnzPerRow,
+    double* A_nonzero_buf, int* A_idx_pointer_buf, int* A_nonzero_idx_buf,int *nnz_total) {
+	CUSPARSE_CHECK(cusparseDnnz(Caffe::cusparse_handle(),
+			CUSPARSE_DIRECTION_COLUMN, M, N,
+			Caffe::cusparse_matdescr(), A, M,
+			nnzPerRow, nnz_total));
+
+	CUSPARSE_CHECK(cusparseDdense2csr(Caffe::cusparse_handle(),
+			M, N, Caffe::cusparse_matdescr(), A, M, nnzPerRow,
+			A_nonzero_buf, A_nonzero_idx_buf, A_idx_pointer_buf));
+}
+
 template <>
 void caffe_gpu_gemv<float>(const CBLAS_TRANSPOSE TransA, const int M,
     const int N, const float alpha, const float* A, const float* x,

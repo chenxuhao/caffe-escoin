@@ -332,10 +332,38 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
     col_buff = col_buffer_.gpu_data();
   }
   for (int g = 0; g < group_; ++g) {
-    caffe_gpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
+#ifdef USE_CUSPARSE
+		// cxh
+	  int total_nonzero = 0;
+		// transform weight matrix from dense format to sparse format (CSR)
+	  caffe_gpu_sparse_dense2csr(conv_out_channels_ / group_, conv_out_spatial_dim_,
+						  weights + weight_offset * g,
+						  nonzero_per_rowcol_buffer_.mutable_gpu_data(),
+						  nonzero_elements_buffer_.mutable_gpu_data(),
+						  index_pointers_buffer_.mutable_gpu_data(),
+						  nonzero_indices_buffer_.mutable_gpu_data(), &total_nonzero);
+	  Dtype sparsity = (Dtype)1.0 - (Dtype)total_nonzero/(Dtype)(kernel_dim_*height_out_*width_out_);
+	  //LOG(INFO)<<"Sparsity of "<< Layer<Dtype>::layer_param().name() << ": "<< sparsity;
+	  if(sparsity < (Dtype)0.9) {
+#endif
+      caffe_gpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
         group_, conv_out_spatial_dim_, kernel_dim_,
         (Dtype)1., weights + weight_offset_ * g, col_buff + col_offset_ * g,
         (Dtype)0., output + output_offset_ * g);
+#ifdef USE_CUSPARSE
+		// cxh
+    } else {
+		 //sparse weight matrix multi. dense feature map matrix
+		 caffe_gpu_sparse_mmcsr(conv_out_channels_ /group_, 
+		    conv_out_spatial_dim_, kernel_dim_ / group_, 
+				total_nonzero, (Dtype)1., 
+			  nonzero_elements_buffer_.gpu_data(),
+			  index_pointers_buffer_.gpu_data(),
+			  nonzero_indices_buffer_.gpu_data(),
+				col_buff + col_offset_ * g, (Dtype)0., 
+				output + output_offset_ * g);
+	  }
+#endif
   }
 }
 

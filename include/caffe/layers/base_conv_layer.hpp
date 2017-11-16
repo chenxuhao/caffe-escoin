@@ -167,6 +167,15 @@ class BaseConvolutionLayer : public Layer<Dtype> {
 
   Blob<Dtype> col_buffer_;
   Blob<Dtype> bias_multiplier_;
+
+  // cxh
+  Blob<Dtype> weight_buffer_; //store nonzero weights in the continuous memory
+#ifdef USE_CUSPARSE
+    Blob<Dtype> nonzero_elements_buffer_;
+    Blob<int> nonzero_indices_buffer_;
+    Blob<int> index_pointers_buffer_;
+    Blob<int> nonzero_per_rowcol_buffer_;
+#endif
 };
 
 }  // namespace caffe

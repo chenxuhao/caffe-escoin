@@ -39,7 +39,7 @@ void classname<Dtype>::funcname##_##gpu(const vector<Blob<Dtype>*>& top, \
 #ifdef USE_CUDNN  // cuDNN acceleration library.
 #include "caffe/util/cudnn.hpp"
 #endif
-
+#include <cusparse.h> // cxh
 //
 // CUDA macros
 //
@@ -66,6 +66,14 @@ void classname<Dtype>::funcname##_##gpu(const vector<Blob<Dtype>*>& top, \
       << caffe::curandGetErrorString(status); \
   } while (0)
 
+// cxh
+#define CUSPARSE_CHECK(condition) \
+  do { \
+    cusparseStatus_t status = condition; \
+    CHECK_EQ(status, CUSPARSE_STATUS_SUCCESS) << " " \
+      << caffe::cusparseGetErrorString(status); \
+  } while (0)
+
 // CUDA: grid stride looping
 #define CUDA_KERNEL_LOOP(i, n) \
   for (int i = blockIdx.x * blockDim.x + threadIdx.x; \
@@ -80,6 +88,7 @@ namespace caffe {
 // CUDA: library error reporting.
 const char* cublasGetErrorString(cublasStatus_t error);
 const char* curandGetErrorString(curandStatus_t error);
+const char* cusparseGetErrorString(cusparseStatus_t error); // cxh
 
 // CUDA: use 512 threads per block
 const int CAFFE_CUDA_NUM_THREADS = 512;
