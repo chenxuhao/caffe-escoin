@@ -133,17 +133,19 @@ class Caffe {
   }
 #ifndef CPU_ONLY
   inline static cublasHandle_t cublas_handle() { return Get().cublas_handle_; }
+  // cxh
+  inline static cusparseHandle_t cusparse_handle() { return Get().cusparse_handle_; }
+  inline static cusparseMatDescr_t cusparse_matdescr() { return Get().cusparse_matdescr_; }
   inline static curandGenerator_t curand_generator() {
     return Get().curand_generator_;
   }
-	// cxh
-  inline static cusparseHandle_t cusparse_handle() { return Get().cusparse_handle_; }
-  inline static cusparseMatDescr_t cusparse_matdescr() { return Get().cusparse_matdescr_; }
-  inline static void cusparse_initialize_matsescr(){
-	  if(Get().cusparse_matdescr_){
-		  cusparseSetMatType(Get().cusparse_matdescr_,CUSPARSE_MATRIX_TYPE_GENERAL);
-	  	  cusparseSetMatIndexBase(Get().cusparse_matdescr_,CUSPARSE_INDEX_BASE_ZERO);
+  // cxh
+  inline static void cusparse_initialize_matsescr() {
+	  if(Get().cusparse_matdescr_) {
+		  cusparseSetMatType(Get().cusparse_matdescr_, CUSPARSE_MATRIX_TYPE_GENERAL);
+	  	  cusparseSetMatIndexBase(Get().cusparse_matdescr_, CUSPARSE_INDEX_BASE_ZERO);
 	  }
+  }
 #endif
 
   // Returns the mode: running on CPU or GPU.
@@ -178,9 +180,9 @@ class Caffe {
  protected:
 #ifndef CPU_ONLY
   cublasHandle_t cublas_handle_;
-  curandGenerator_t curand_generator_;
   cusparseHandle_t cusparse_handle_; // cxh
   cusparseMatDescr_t cusparse_matdescr_; // cxh
+  curandGenerator_t curand_generator_;
 #endif
   shared_ptr<RNG> random_generator_;
 

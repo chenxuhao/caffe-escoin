@@ -105,13 +105,23 @@ void* Caffe::RNG::generator() {
 #else  // Normal GPU + CPU Caffe.
 
 Caffe::Caffe()
-    : cublas_handle_(NULL), curand_generator_(NULL), random_generator_(),
-    cusparse_handle_(NULL), cusparse_matdescr_(NULL), mode_(Caffe::CPU),
+    : cublas_handle_(NULL), cusparse_handle_(NULL), cusparse_matdescr_(NULL), 
+    curand_generator_(NULL), random_generator_(), mode_(Caffe::CPU),
     solver_count_(1), solver_rank_(0), multiprocess_(false) {
   // Try to create a cublas handler, and report an error if failed (but we will
   // keep the program running as one might just want to run CPU code).
   if (cublasCreate(&cublas_handle_) != CUBLAS_STATUS_SUCCESS) {
     LOG(ERROR) << "Cannot create Cublas handle. Cublas won't be available.";
+  }
+  // cxh
+  if (cusparseCreate(&cusparse_handle_) != CUSPARSE_STATUS_SUCCESS) {
+        LOG(ERROR) << "Cannot create Cusparse handle. Cusparse won't be available.";
+  }
+  if (cusparseCreateMatDescr(&cusparse_matdescr_) != CUSPARSE_STATUS_SUCCESS) {
+      LOG(ERROR) << "Cannot create Cusparse matrix descriptor.";
+  } else {
+	  cusparseSetMatType(cusparse_matdescr_,CUSPARSE_MATRIX_TYPE_GENERAL);
+	  cusparseSetMatIndexBase(cusparse_matdescr_,CUSPARSE_INDEX_BASE_ZERO);
   }
   // Try to create a curand handler.
   if (curandCreateGenerator(&curand_generator_, CURAND_RNG_PSEUDO_DEFAULT)
@@ -120,26 +130,16 @@ Caffe::Caffe()
       != CURAND_STATUS_SUCCESS) {
     LOG(ERROR) << "Cannot create Curand generator. Curand won't be available.";
   }
-	// cxh
-  if (cusparseCreate(&cusparse_handle_) != CUSPARSE_STATUS_SUCCESS) {
-        LOG(ERROR) << "Cannot create Cusparse handle. Cusparse won't be available.";
-  }
-  if (cusparseCreateMatDescr(&cusparse_matdescr_) != CUSPARSE_STATUS_SUCCESS) {
-      LOG(ERROR) << "Cannot create Cusparse matrix descriptor.";
-  }else{
-	  cusparseSetMatType(cusparse_matdescr_,CUSPARSE_MATRIX_TYPE_GENERAL);
-	  cusparseSetMatIndexBase(cusparse_matdescr_,CUSPARSE_INDEX_BASE_ZERO);
-  }
 }
 
 Caffe::~Caffe() {
   if (cublas_handle_) CUBLAS_CHECK(cublasDestroy(cublas_handle_));
+  // cxh
+  if (cusparse_handle_) CUSPARSE_CHECK(cusparseDestroy(cusparse_handle_));
+  if (cusparse_matdescr_) CUSPARSE_CHECK(cusparseDestroyMatDescr(cusparse_matdescr_));
   if (curand_generator_) {
     CURAND_CHECK(curandDestroyGenerator(curand_generator_));
   }
-	// cxh
-	if (cusparse_handle_) CUSPARSE_CHECK(cusparseDestroy(cusparse_handle_));
-	if (cusparse_matdescr_) CUSPARSE_CHECK(cusparseDestroyMatDescr(cusparse_matdescr_));
 }
 
 void Caffe::set_random_seed(const unsigned int seed) {
@@ -170,22 +170,21 @@ void Caffe::SetDevice(const int device_id) {
   // may perform initialization using the GPU.
   CUDA_CHECK(cudaSetDevice(device_id));
   if (Get().cublas_handle_) CUBLAS_CHECK(cublasDestroy(Get().cublas_handle_));
+  // cxh
+  if (Get().cusparse_handle_) CUSPARSE_CHECK(cusparseDestroy(Get().cusparse_handle_));
+  if (Get().cusparse_matdescr_) CUSPARSE_CHECK(cusparseDestroyMatDescr(Get().cusparse_matdescr_));
   if (Get().curand_generator_) {
     CURAND_CHECK(curandDestroyGenerator(Get().curand_generator_));
   }
-	// cxh
-	if (Get().cusparse_handle_) CUSPARSE_CHECK(cusparseDestroy(Get().cusparse_handle_));
-	if (Get().cusparse_matdescr_) CUSPARSE_CHECK(cusparseDestroyMatDescr(Get().cusparse_matdescr_));
-
   CUBLAS_CHECK(cublasCreate(&Get().cublas_handle_));
+  // cxh
+  CUSPARSE_CHECK(cusparseCreate(&Get().cusparse_handle_));
+  CUSPARSE_CHECK(cusparseCreateMatDescr(&Get().cusparse_matdescr_));
+  Get().cusparse_initialize_matsescr();
   CURAND_CHECK(curandCreateGenerator(&Get().curand_generator_,
       CURAND_RNG_PSEUDO_DEFAULT));
   CURAND_CHECK(curandSetPseudoRandomGeneratorSeed(Get().curand_generator_,
       cluster_seedgen()));
-	// cxh
-	CUSPARSE_CHECK(cusparseCreate(&Get().cusparse_handle_));
-	CUSPARSE_CHECK(cusparseCreateMatDescr(&Get().cusparse_matdescr_));
-	Get().cusparse_initialize_matsescr();
 }
 
 void Caffe::DeviceQuery() {

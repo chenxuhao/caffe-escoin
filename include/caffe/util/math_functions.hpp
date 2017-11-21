@@ -10,6 +10,8 @@
 #include "caffe/util/device_alternate.hpp"
 #include "caffe/util/mkl_alternate.hpp"
 
+#define SPARSE_WEIGHT // cxh
+
 namespace caffe {
 
 // Caffe gemm provides a simpler interface to the gemm functions, with the
@@ -155,6 +157,19 @@ void caffe_gpu_gemm(const CBLAS_TRANSPOSE TransA,
     const CBLAS_TRANSPOSE TransB, const int M, const int N, const int K,
     const Dtype alpha, const Dtype* A, const Dtype* B, const Dtype beta,
     Dtype* C);
+
+// cxh: sparse matrix A * dense matrix B. A is stored in CSR format
+template <typename Dtype>
+void caffe_gpu_sparse_mmcsr(const int M, const int N, const int K,
+    const int nnz, const Dtype alpha, const Dtype* A_nonzero_buf, 
+	const int* A_idx_pointer_buf, const int* A_nonzero_idx_buf,
+	const Dtype* B, const Dtype beta, Dtype* C);
+
+// cxh: transform dense matrix A to sparse matrix A in CSR format
+template <typename Dtype>
+void caffe_gpu_sparse_dense2csr(const int M, const int N,
+    const Dtype* A, int* nnzPerRow, Dtype* A_nonzero_buf, 
+	int* A_idx_pointer_buf, int* A_nonzero_idx_buf, int *nnz_total);
 
 template <typename Dtype>
 void caffe_gpu_gemv(const CBLAS_TRANSPOSE TransA, const int M, const int N,
