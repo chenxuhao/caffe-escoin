@@ -44,29 +44,47 @@ void caffe_gpu_gemm<double>(const CBLAS_TRANSPOSE TransA,
 
 // cxh
 template <>
+void caffe_gpu_sparse_csrmm<float>(const int M, const int N, const int K,
+    const int nnz, const float alpha, const float* A_nonzero_buf, 
+		const int* A_idx_pointer_buf, const int* A_nonzero_idx_buf,
+    const float* B, const float beta, float* C, float *transpose_C) {
+	CUSPARSE_CHECK(cusparseScsrmm2(Caffe::cusparse_handle(),
+		CUSPARSE_OPERATION_NON_TRANSPOSE,CUSPARSE_OPERATION_TRANSPOSE,
+		M, N, K, nnz, &alpha, Caffe::cusparse_matdescr(), A_nonzero_buf, 
+		A_idx_pointer_buf, A_nonzero_idx_buf, B, N, &beta, transpose_C, M));
+	//transpose C
+	const float one = 1;
+	const float zero = 0;
+	CUBLAS_CHECK(cublasSgeam(Caffe::cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_T,
+			N, M, &one, transpose_C, M, &zero, transpose_C, M, C, N));
+}
+
+template <>
+void caffe_gpu_sparse_csrmm<double>(const int M, const int N, const int K,
+    const int nnz, const double alpha, const double* A_nonzero_buf, 
+		const int* A_idx_pointer_buf, const int* A_nonzero_idx_buf,
+    const double* B, const double beta, double* C, double *transpose_C) {
+	// This function performs sparse matrix (A) dense matrix (B) multiplication
+	CUSPARSE_CHECK(cusparseDcsrmm2(Caffe::cusparse_handle(),
+		CUSPARSE_OPERATION_NON_TRANSPOSE,CUSPARSE_OPERATION_TRANSPOSE,
+		M, N, K, nnz, &alpha, Caffe::cusparse_matdescr(), A_nonzero_buf, 
+		A_idx_pointer_buf, A_nonzero_idx_buf, B, N, &beta, transpose_C, M));
+	//transpose C
+	const double one = 1;
+	const double zero = 0;
+	CUBLAS_CHECK(cublasDgeam(Caffe::cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_T,
+			N, M, &one, transpose_C, M, &zero, transpose_C, M, C, N));
+}
+
+template <>
 void caffe_gpu_sparse_mmcsr<float>(const int M, const int N, const int K,
     const int nnz, const float alpha,
     const float* A_nonzero_buf, const int* A_idx_pointer_buf, const int* A_nonzero_idx_buf,
 		const float* B, const float beta, float* C) {
-#ifdef SPARSE_WEIGHT
-	//float *Ct;
-	//cudaMalloc((void**)&Ct, sizeof(float)*M*N);
-	// This function performs sparse matrix (A) dense matrix (B) multiplication
-	CUSPARSE_CHECK(cusparseScsrmm2(Caffe::cusparse_handle(), 
-			CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
-			M, N, K, nnz, &alpha, Caffe::cusparse_matdescr(), A_nonzero_buf, 
-			A_idx_pointer_buf, A_nonzero_idx_buf, B, K, &beta, C, M));
-	// transpose column-major C to row-major C
-	float one = 1.0;
-	float zero = 0.0;
-	cublasSgeam(Caffe::cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
-			N, M, &one, C, M, &zero, C, M, C, N);
-#else
 	CUSPARSE_CHECK(cusparseScsrmm(Caffe::cusparse_handle(),
 			CUSPARSE_OPERATION_TRANSPOSE, K, M, N, nnz, &alpha,
 			Caffe::cusparse_matdescr(), A_nonzero_buf, 
 			A_idx_pointer_buf, A_nonzero_idx_buf, B, K, &beta, C, N));
-#endif
 }
 
 template <>
@@ -74,24 +92,10 @@ void caffe_gpu_sparse_mmcsr<double>(const int M, const int N, const int K,
     const int nnz, const double alpha,
     const double* A_nonzero_buf, const int* A_idx_pointer_buf, const int* A_nonzero_idx_buf,
     const double* B, const double beta, double* C) {
-#ifdef SPARSE_WEIGHT
-	//double *Ct;
-	//cudaMalloc((void**)&Ct, sizeof(double)*M*N);
-	CUSPARSE_CHECK(cusparseDcsrmm2(Caffe::cusparse_handle(), 
-			CUSPARSE_OPERATION_NON_TRANSPOSE, CUSPARSE_OPERATION_NON_TRANSPOSE,
-			M, N, K, nnz, &alpha, Caffe::cusparse_matdescr(), A_nonzero_buf, 
-			A_idx_pointer_buf, A_nonzero_idx_buf, B, K, &beta, C, M));
-	// transpose column-major C to row-major C
-	double one = 1.0;
-	double zero = 0.0;
-	cublasDgeam(Caffe::cublas_handle(), CUBLAS_OP_T, CUBLAS_OP_N,
-			N, M, &one, C, M, &zero, C, M, C, N);
-#else
 	CUSPARSE_CHECK(cusparseDcsrmm(Caffe::cusparse_handle(),
 			CUSPARSE_OPERATION_TRANSPOSE, K, M, N, nnz, &alpha,
 			Caffe::cusparse_matdescr(), A_nonzero_buf, 
 			A_idx_pointer_buf, A_nonzero_idx_buf, B, K, &beta, C, N));
-#endif
 }
 
 template <>
@@ -144,6 +148,7 @@ void caffe_gpu_sparse_dense2csr<double>(const int M, const int N, const double* 
 			A_nonzero_buf, A_nonzero_idx_buf, A_idx_pointer_buf));
 #endif
 }
+// end of cxh
 
 template <>
 void caffe_gpu_gemv<float>(const CBLAS_TRANSPOSE TransA, const int M,

@@ -10,8 +10,6 @@
 #include "caffe/util/device_alternate.hpp"
 #include "caffe/util/mkl_alternate.hpp"
 
-#define SPARSE_WEIGHT // cxh
-
 namespace caffe {
 
 // Caffe gemm provides a simpler interface to the gemm functions, with the
@@ -158,12 +156,20 @@ void caffe_gpu_gemm(const CBLAS_TRANSPOSE TransA,
     const Dtype alpha, const Dtype* A, const Dtype* B, const Dtype beta,
     Dtype* C);
 
-// cxh: sparse matrix A * dense matrix B. A is stored in CSR format
+// sparse matrix A *  dense matrix B. A is stored in CSR format
+// transpose_C is required for temporary storage because of the column-major order of cusparse
+template <typename Dtype>
+void caffe_gpu_sparse_csrmm(const int M, const int N, const int K,
+    const int nnz, const Dtype alpha, const Dtype* A_nonzero_buf, 
+		const int* A_idx_pointer_buf, const int* A_nonzero_idx_buf,
+    const Dtype* B, const Dtype beta, Dtype* C, Dtype *transpose_C);
+
+// cxh: dense matrix A * sparse matrix B. B is stored in CSR format
 template <typename Dtype>
 void caffe_gpu_sparse_mmcsr(const int M, const int N, const int K,
-    const int nnz, const Dtype alpha, const Dtype* A_nonzero_buf, 
-	const int* A_idx_pointer_buf, const int* A_nonzero_idx_buf,
-	const Dtype* B, const Dtype beta, Dtype* C);
+    const int nnz, const Dtype alpha, const Dtype* B_nonzero_buf, 
+    const int* B_idx_pointer_buf, const int* B_nonzero_idx_buf,
+    const Dtype* A, const Dtype beta, Dtype* C);
 
 // cxh: transform dense matrix A to sparse matrix A in CSR format
 template <typename Dtype>

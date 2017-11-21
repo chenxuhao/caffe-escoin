@@ -7,7 +7,10 @@
 #include "caffe/layer.hpp"
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/im2col.hpp"
-#define USE_CUSPARSE
+
+#define USE_CUSPARSE // cxh
+//#define SPARSE_WEIGHT // cxh
+
 namespace caffe {
 
 /**
@@ -19,6 +22,7 @@ class BaseConvolutionLayer : public Layer<Dtype> {
  public:
   explicit BaseConvolutionLayer(const LayerParameter& param)
       : Layer<Dtype>(param) {}
+  virtual void WeightAlign(); // cxh: transform dense weight matrix to sparse
   virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top);
   virtual void Reshape(const vector<Blob<Dtype>*>& bottom,
@@ -176,6 +180,13 @@ class BaseConvolutionLayer : public Layer<Dtype> {
     Blob<int> index_pointers_buffer_;
     Blob<int> nonzero_per_rowcol_buffer_;
 #endif
+    //Three blobs for sparse weight storage in CSC/CSR format
+    Blob<Dtype> nz_weight_values_;//nonzero elements
+    Blob<int> nz_weight_indices_;//index of nonzero
+    Blob<int> nz_weight_index_pointers_;//pointer(index) of indices
+    Blob<int> nz_per_row_;//nonzero per row for cusparse
+    vector<int> nz_num_;//the number of nonzero for cusparse
+		Blob<Dtype> transposed_output_buffer_;
 };
 
 }  // namespace caffe

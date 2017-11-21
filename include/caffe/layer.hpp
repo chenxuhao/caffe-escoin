@@ -91,6 +91,9 @@ class Layer {
   virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {}
 
+  // cxh: typically for convolutional layers, to align nonzero weights together
+  virtual void WeightAlign() {}
+
   /**
    * @brief Adjust the shapes of top blobs and internal buffers to accommodate
    *        the shapes of the bottom blobs.
