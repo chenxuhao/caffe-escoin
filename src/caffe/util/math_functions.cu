@@ -101,7 +101,7 @@ void caffe_gpu_sparse_mmcsr<double>(const int M, const int N, const int K,
 template <>
 void caffe_gpu_sparse_dense2csr<float>(const int M, const int N, const float* A, int* nnzPerRow,
     float* A_nonzero_buf, int* A_idx_pointer_buf, int* A_nonzero_idx_buf, int *nnz_total) {
-#ifdef SPARSE_WEIGHT
+#if 0
 	// This function computes the number of nonzero elements per row or column 
 	// and the total number of nonzero elements in a dense matrix.
 	CUSPARSE_CHECK(cusparseSnnz(Caffe::cusparse_handle(),
@@ -128,7 +128,7 @@ void caffe_gpu_sparse_dense2csr<float>(const int M, const int N, const float* A,
 template <>
 void caffe_gpu_sparse_dense2csr<double>(const int M, const int N, const double* A, int* nnzPerRow,
     double* A_nonzero_buf, int* A_idx_pointer_buf, int* A_nonzero_idx_buf,int *nnz_total) {
-#ifdef SPARSE_WEIGHT
+#if 0
 	CUSPARSE_CHECK(cusparseDnnz(Caffe::cusparse_handle(),
 			CUSPARSE_DIRECTION_ROW, M, N,
 			Caffe::cusparse_matdescr(), A, M,

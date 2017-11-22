@@ -12,7 +12,7 @@ namespace caffe {
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::WeightAlign(){
 	CHECK_EQ(this->blobs_[0]->num_axes(),4);//caffe now supports any dimension
-	const LayerParameter& layerparam = this->layer_param();
+	//const LayerParameter& layerparam = this->layer_param();
 	//LOG(INFO)<<"layer\t"<<layerparam.name()<<"\t"<<"has sparsity of "<< this->blobs_[0]->GetSparsity();
 	//this->blobs_[0]->WriteToNistMMIO(layerparam.name()+".weight");
 
@@ -21,28 +21,28 @@ void BaseConvolutionLayer<Dtype>::WeightAlign(){
 	const int N = this->blobs_[0]->count(1,4);
 	const int weight_offset = this->blobs_[0]->count()/group_;
 	const int row_offset = this->blobs_[0]->shape(0)/group_ + 1;
-	int left_cols = 0;
-	int left_rows = 0;
+	//int left_cols = 0;
+	//int left_rows = 0;
 	//switch(conv_param.conv_mode()){
 		//case caffe::ConvolutionParameter_ConvMode_LOWERED_CSRMM:
 			//LOG(INFO)<<"ConvolutionParameter_ConvMode_LOWERED_CSRMM";
 			for (int g = 0; g < group_; ++g) {
 				switch (Caffe::mode()) {
 				    case Caffe::CPU:
-						/*
 				    	caffe_cpu_sparse_dense2csr(M, N,
 								this->blobs_[0]->mutable_cpu_data() + weight_offset * g,
 								nz_weight_values_.mutable_cpu_data()+ weight_offset * g,
 								nz_weight_indices_.mutable_cpu_data()+ weight_offset * g,
 								nz_weight_index_pointers_.mutable_cpu_data() + row_offset * g);
-							*/
 				      break;
 				    case Caffe::GPU: {
 				#ifndef CPU_ONLY
+						printf("transform weight matrix from dense to sparse\n");
+						printf("M=%d, N=%d, weight_offset=%d, row_offset=%d\n", M, N, weight_offset, row_offset);
 				    	int total_nonzero = 0;
 				    	caffe_gpu_sparse_dense2csr(M, N,
 				    			this->blobs_[0]->gpu_data() + weight_offset * g,
-				    			nz_per_row_.mutable_gpu_data() + M*g,
+				    			nz_per_row_.mutable_gpu_data() + M * g,
 							    nz_weight_values_.mutable_gpu_data()+ weight_offset * g,
 							    nz_weight_index_pointers_.mutable_gpu_data() + row_offset * g,
 							    nz_weight_indices_.mutable_gpu_data()+ weight_offset * g,
@@ -291,7 +291,7 @@ void BaseConvolutionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
 
   // cxh
   if(!reverse_dimensions()) {
-#ifdef USE_CUSPARSE
+#if 0
 	  nonzero_elements_buffer_.Reshape(1, 1, 1, conv_out_channels_ * kernel_dim_ / group_);
 	  nonzero_indices_buffer_.Reshape(1, 1, 1, nonzero_elements_buffer_.count());
 	  index_pointers_buffer_.Reshape(1, 1, 1, conv_out_channels_ / group_ + 1);
@@ -303,7 +303,7 @@ void BaseConvolutionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
 	  nz_per_row_.Reshape(1,1,1,this->blobs_[0]->shape(0));
 	  nz_num_.resize(group_);
   }
-	transposed_output_buffer_.Reshape(1,1,conv_out_spatial_dim_,conv_out_channels_/group_);
+  transposed_output_buffer_.Reshape(1,1,conv_out_spatial_dim_,conv_out_channels_/group_);
 
   bottom_dim_ = bottom[0]->count(channel_axis_);
   top_dim_ = top[0]->count(channel_axis_);
@@ -323,18 +323,43 @@ template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
     const Dtype* weights, Dtype* output, bool skip_im2col) {
   const Dtype* col_buff = input;
+  Timer total_timer;
   if (!is_1x1_) {
     if (!skip_im2col) {
       conv_im2col_cpu(input, col_buffer_.mutable_cpu_data());
     }
     col_buff = col_buffer_.cpu_data();
   }
+  total_timer.Start();
   for (int g = 0; g < group_; ++g) {
+#if 0
+	  const int M = conv_out_channels_ /group_;
+	  const int N = conv_out_spatial_dim_;
+	  const int K = kernel_dim_;
+	  const int row_offset = conv_out_channels_ /group_ + 1;
+	  Timer timer;
+	  timer.Start();
+	  //printf("MKL sparse weight matrix multi. dense feature map matrix\n");
+	  caffe_cpu_sparse_mmcsr(M, N, K, (Dtype)1.,
+			  nz_weight_values_.cpu_data() + weight_offset_ * g,
+			  nz_weight_indices_.cpu_data() + weight_offset_ * g,
+			  nz_weight_index_pointers_.cpu_data() + row_offset * g,
+			  nz_weight_index_pointers_.cpu_data() + row_offset * g + 1,
+			  col_buff + col_offset_ * g,
+			  (Dtype)0., output + output_offset_ * g);
+	  timer.Stop();
+	  //LOG(INFO) << this->layer_param().name() << "\t group " << g  << ": " 
+		//<< timer.MicroSeconds() << " us (Compressed Row Storage Timing)";
+#else
     caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
         group_, conv_out_spatial_dim_, kernel_dim_,
         (Dtype)1., weights + weight_offset_ * g, col_buff + col_offset_ * g,
         (Dtype)0., output + output_offset_ * g);
+#endif
   }
+  total_timer.Stop();
+  //LOG(INFO) << this->layer_param().name() << ": "
+	  //<< total_timer.MilliSeconds() << " ms (Compressed Row Storage Timing)";
 }
 
 template <typename Dtype>
@@ -390,76 +415,77 @@ void BaseConvolutionLayer<Dtype>::backward_cpu_bias(Dtype* bias,
 
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
-    const Dtype* weights, Dtype* output, bool skip_im2col) {
-  const Dtype* col_buff = input;
-  if (!is_1x1_) {
-    if (!skip_im2col) {
-      conv_im2col_gpu(input, col_buffer_.mutable_gpu_data());
-    }
-    col_buff = col_buffer_.gpu_data();
-  }
-  for (int g = 0; g < group_; ++g) {
+		const Dtype* weights, Dtype* output, bool skip_im2col) {
+	const Dtype* col_buff = input;
+	if (!is_1x1_) {
+		if (!skip_im2col) {
+			conv_im2col_gpu(input, col_buffer_.mutable_gpu_data());
+		}
+		col_buff = col_buffer_.gpu_data();
+	}
+	for (int g = 0; g < group_; ++g) {
 #ifdef USE_CUSPARSE
-	  int total_nonzero = 0;
-	  // cxh
-#ifdef SPARSE_WEIGHT
-      // printf("transform weight matrix from dense format to sparse format (CSR)\n");
-			/*
-	  caffe_gpu_sparse_dense2csr(conv_out_channels_ / group_, kernel_dim_,
-         weights + weight_offset_ * g,
-         nonzero_per_rowcol_buffer_.mutable_gpu_data(),
-         nonzero_elements_buffer_.mutable_gpu_data(),
-         index_pointers_buffer_.mutable_gpu_data(),
-         nonzero_indices_buffer_.mutable_gpu_data(), &total_nonzero);
+		// cxh
+#if 1
+		/*
+		// printf("transform weight matrix from dense format to sparse format (CSR)\n");
+		caffe_gpu_sparse_dense2csr(conv_out_channels_ / group_, kernel_dim_,
+				weights + weight_offset_ * g,
+				nonzero_per_rowcol_buffer_.mutable_gpu_data(),
+				nonzero_elements_buffer_.mutable_gpu_data(),
+				index_pointers_buffer_.mutable_gpu_data(),
+				nonzero_indices_buffer_.mutable_gpu_data(), &total_nonzero);
 		*/
 #else
-	  caffe_gpu_sparse_dense2csr(kernel_dim_ / group_, conv_out_spatial_dim_,
-		  col_buff + col_offset_ * g,
-		  nonzero_per_rowcol_buffer_.mutable_gpu_data(),
-		  nonzero_elements_buffer_.mutable_gpu_data(),
-		  index_pointers_buffer_.mutable_gpu_data(),
-		  nonzero_indices_buffer_.mutable_gpu_data(), &total_nonzero);
+		int total_nonzero = 0;
+		caffe_gpu_sparse_dense2csr(kernel_dim_ / group_, conv_out_spatial_dim_,
+				col_buff + col_offset_ * g,
+				nonzero_per_rowcol_buffer_.mutable_gpu_data(),
+				nonzero_elements_buffer_.mutable_gpu_data(),
+				index_pointers_buffer_.mutable_gpu_data(),
+				nonzero_indices_buffer_.mutable_gpu_data(), &total_nonzero);
 #endif
-	  Dtype sparsity = (Dtype)1.0 - (Dtype)total_nonzero / (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
-	  LOG(INFO)<<"Sparsity of "<< Layer<Dtype>::layer_param().name() << ": "<< sparsity;
-	  if(sparsity < (Dtype)0.9) {
-         //printf("dense weight matrix multi. dense feature map matrix\n");
+		Dtype sparsity = (Dtype)1.0 - (Dtype)nz_num_[g] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
+		//LOG(INFO)<<"Sparsity of "<< Layer<Dtype>::layer_param().name() << ": "<< sparsity;
+		//if(sparsity < (Dtype)0.9) {
+		if(1) {
 #endif
-      caffe_gpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
-        group_, conv_out_spatial_dim_, kernel_dim_,
-        (Dtype)1., weights + weight_offset_ * g, col_buff + col_offset_ * g,
-        (Dtype)0., output + output_offset_ * g);
+			//printf("dense weight matrix multi. dense feature map matrix\n");
+			caffe_gpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
+					group_, conv_out_spatial_dim_, kernel_dim_,
+					(Dtype)1., weights + weight_offset_ * g, col_buff + col_offset_ * g,
+					(Dtype)0., output + output_offset_ * g);
 #ifdef USE_CUSPARSE
-      } else {
-         // cxh: only do this when sparsity > 90%
-				 //timer.Start();
+		} else {
+			// cxh: only do this when sparsity > 90%
+			//timer.Start();
 #if 1
-         // printf("sparse weight matrix multi. dense feature map matrix\n");
-         caffe_gpu_sparse_csrmm(conv_out_channels_ /group_,
-            conv_out_spatial_dim_, kernel_dim_, 
-            nz_num_[g], (Dtype)1., 
-						nz_weight_values_.gpu_data()+ weight_offset_ * g,
-						nz_weight_index_pointers_.gpu_data() + (conv_out_channels_ / group_ + 1) * g,
-						nz_weight_indices_.gpu_data()+ weight_offset_ * g,
-            //nonzero_elements_buffer_.gpu_data(),
-            //index_pointers_buffer_.gpu_data(),
-            //nonzero_indices_buffer_.gpu_data(),
-            col_buff + col_offset_ * g, (Dtype)0., 
-            output + output_offset_ * g,
-						transposed_output_buffer_.mutable_gpu_data());
+			printf("sparse weight matrix multi. dense feature map matrix, sparsity=%f\n", sparsity);
+			caffe_gpu_sparse_csrmm(conv_out_channels_ /group_,
+					conv_out_spatial_dim_, kernel_dim_, 
+					nz_num_[g], (Dtype)1., 
+					nz_weight_values_.gpu_data()+ weight_offset_ * g,
+					nz_weight_index_pointers_.gpu_data() + (conv_out_channels_ / group_ + 1) * g,
+					nz_weight_indices_.gpu_data()+ weight_offset_ * g,
+					//nonzero_elements_buffer_.gpu_data(),
+					//index_pointers_buffer_.gpu_data(),
+					//nonzero_indices_buffer_.gpu_data(),
+					col_buff + col_offset_ * g, (Dtype)0., 
+					output + output_offset_ * g,
+					transposed_output_buffer_.mutable_gpu_data());
 #else
-		 caffe_gpu_sparse_mmcsr(conv_out_channels_ /group_, 
-			  conv_out_spatial_dim_, kernel_dim_ / group_,
-			  total_nonzero, (Dtype)1., 
-			  nonzero_elements_buffer_.gpu_data(),
-			  index_pointers_buffer_.gpu_data(),
-			  nonzero_indices_buffer_.gpu_data(),
-			  weights + weight_offset_ * g, (Dtype)0., 
-			  output + output_offset_ * g);
+			caffe_gpu_sparse_mmcsr(conv_out_channels_ /group_, 
+					conv_out_spatial_dim_, kernel_dim_ / group_,
+					total_nonzero, (Dtype)1., 
+					nonzero_elements_buffer_.gpu_data(),
+					index_pointers_buffer_.gpu_data(),
+					nonzero_indices_buffer_.gpu_data(),
+					weights + weight_offset_ * g, (Dtype)0., 
+					output + output_offset_ * g);
 #endif
-	  }
+		}
 #endif
-  }
+	}
 }
 
 template <typename Dtype>

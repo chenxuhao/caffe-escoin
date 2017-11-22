@@ -10,6 +10,7 @@
 #include "caffe/layer_factory.hpp"
 #include "caffe/proto/caffe.pb.h"
 #include "caffe/util/math_functions.hpp"
+#include "caffe/util/benchmark.hpp" // cxh
 
 /**
  Forward declare boost::thread instead of including boost/thread.hpp

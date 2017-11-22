@@ -10,7 +10,6 @@
 
 #define USE_CUSPARSE // cxh
 //#define SPARSE_WEIGHT // cxh
-
 namespace caffe {
 
 /**
@@ -174,7 +173,7 @@ class BaseConvolutionLayer : public Layer<Dtype> {
 
   // cxh
   Blob<Dtype> weight_buffer_; //store nonzero weights in the continuous memory
-#ifdef USE_CUSPARSE
+#if 0
     Blob<Dtype> nonzero_elements_buffer_;
     Blob<int> nonzero_indices_buffer_;
     Blob<int> index_pointers_buffer_;
