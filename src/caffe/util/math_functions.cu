@@ -119,7 +119,7 @@ void caffe_gpu_sparse_dense2csr<float>(const int M, const int N, const float* A,
 			Caffe::cusparse_matdescr(), A, N,
 			nnzPerRow, nnz_total));
 
-	CUSPARSE_CHECK(cusparseSdense2csr(Caffe::cusparse_handle(),
+	CUSPARSE_CHECK(cusparseSdense2csc(Caffe::cusparse_handle(),
 			N, M, Caffe::cusparse_matdescr(), A, N, nnzPerRow,
 			A_nonzero_buf, A_nonzero_idx_buf, A_idx_pointer_buf));
 #endif
@@ -143,7 +143,7 @@ void caffe_gpu_sparse_dense2csr<double>(const int M, const int N, const double* 
 			Caffe::cusparse_matdescr(), A, N,
 			nnzPerRow, nnz_total));
 
-	CUSPARSE_CHECK(cusparseDdense2csr(Caffe::cusparse_handle(),
+	CUSPARSE_CHECK(cusparseDdense2csc(Caffe::cusparse_handle(),
 			N, M, Caffe::cusparse_matdescr(), A, N, nnzPerRow,
 			A_nonzero_buf, A_nonzero_idx_buf, A_idx_pointer_buf));
 #endif

@@ -23,7 +23,7 @@ void caffe_cpu_gemm(const CBLAS_TRANSPOSE TransA,
 // sparse matrix A *  dense matrix B
 // A is stored in CSR format
 template <typename Dtype>
-void caffe_cpu_sparse_mmcsr(const int M, const int N, const int K,
+void caffe_cpu_sparse_csrmm(const int M, const int N, const int K,
 	const Dtype alpha,
 	const Dtype* A_nonzero_buf, const int* A_nonzero_idx_buf, const int* A_idx_pointerB_,const int* A_idx_pointerE_,
 	const Dtype* B,

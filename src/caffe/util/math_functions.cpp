@@ -33,7 +33,7 @@ void caffe_cpu_gemm<double>(const CBLAS_TRANSPOSE TransA,
 
 // cxh
 template <>
-void caffe_cpu_sparse_mmcsr<float>(const int M, const int N, const int K,
+void caffe_cpu_sparse_csrmm<float>(const int M, const int N, const int K,
 		const float alpha,
 		const float* A_nonzero_buf, const int* A_nonzero_idx_buf, const int* A_idx_pointerB_,const int* A_idx_pointerE_,
 		const float* B,
@@ -52,7 +52,7 @@ void caffe_cpu_sparse_mmcsr<float>(const int M, const int N, const int K,
 }
 
 template <>
-void caffe_cpu_sparse_mmcsr<double>(const int M, const int N, const int K,
+void caffe_cpu_sparse_csrmm<double>(const int M, const int N, const int K,
 		const double alpha,
 		const double* A_nonzero_buf, const int* A_nonzero_idx_buf, const int* A_idx_pointerB_,const int* A_idx_pointerE_,
 		const double* B,
@@ -109,6 +109,7 @@ void caffe_cpu_sparse_dense2csr<double>(const int M, const int N,
 	NOT_IMPLEMENTED;
 #endif
 }
+// end cxh
 
 template <>
 void caffe_cpu_gemv<float>(const CBLAS_TRANSPOSE TransA, const int M,
