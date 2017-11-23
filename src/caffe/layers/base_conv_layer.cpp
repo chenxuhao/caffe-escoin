@@ -29,13 +29,50 @@ void BaseConvolutionLayer<Dtype>::WeightAlign(){
 			//LOG(INFO)<<"ConvolutionParameter_ConvMode_LOWERED_CSRMM";
 			for (int g = 0; g < group_; ++g) {
 				switch (Caffe::mode()) {
-				    case Caffe::CPU:
+				    case Caffe::CPU: {
+						// cxh: create a CSR matrix as for LOWERED_CSRMM
 				    	caffe_cpu_sparse_dense2csr(M, N,
 								this->blobs_[0]->mutable_cpu_data() + weight_offset * g,
 								nz_weight_values_.mutable_cpu_data()+ weight_offset * g,
 								nz_weight_indices_.mutable_cpu_data()+ weight_offset * g,
 								nz_weight_index_pointers_.mutable_cpu_data() + row_offset * g);
-				      break;
+#ifndef MKL_CSRMM
+						// direct sparse convolution
+						int height = conv_input_shape_.cpu_data()[1];
+						int width = conv_input_shape_.cpu_data()[2];
+						int kernel_h = kernel_shape_.cpu_data()[0];
+						int kernel_w = kernel_shape_.cpu_data()[1];
+						int pad_h = pad_.cpu_data()[0];
+						int pad_w = pad_.cpu_data()[1];
+
+						// declare variables for sparsity statistics
+						vector<vector<int> > nnz_per_channel_pair(M);
+						for(int i = 0; i < M; ++i) {
+							nnz_per_channel_pair[i] = vector<int>(conv_in_channels_, 0);
+						}
+						int num_of_non_zero_kernels = 0;
+
+						// transform the indices for direct convolution
+						const int *rowptr = nz_weight_index_pointers_.cpu_data() + row_offset * g;
+						int *colidx = nz_weight_indices_.mutable_cpu_data() + weight_offset * g;
+						for (int out_channel = 0; out_channel < M; ++out_channel) {
+							for (int j = rowptr[out_channel]; j < rowptr[out_channel + 1]; ++j) {
+								int col = colidx[j];
+								int kernel_col = col%kernel_w;
+								int kernel_row = (col/kernel_w)%kernel_h;
+								int in_channel = col/(kernel_w*kernel_h);
+								assert(in_channel < conv_in_channels_);
+								colidx[j] = (in_channel*(height + pad_h) + kernel_row)*(width + pad_w) + kernel_col;
+								nnz_per_channel_pair[out_channel][in_channel]++;
+							}
+							for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
+								if (nnz_per_channel_pair[out_channel][in_channel] != 0) {
+									++num_of_non_zero_kernels;
+								}
+							}
+						}
+#endif
+				      break; }
 				    case Caffe::GPU: {
 				#ifndef CPU_ONLY
 						//printf("transform weight matrix from dense to sparse\n");
@@ -338,7 +375,8 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 		const int *row_offsets = nz_weight_index_pointers_.cpu_data() + row_offset * g;
 		int nnz = row_offsets[M];
 		Dtype sparsity = (Dtype)1.0 - (Dtype)nnz/ (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
-		if(sparsity > (Dtype)0.6) {
+		//if(sparsity > (Dtype)0.6) {
+		if(0) {
 			// cxh: only do this when sparsity > 60%
 #ifdef MKL_CSRMM
 			const int N = conv_out_spatial_dim_;
@@ -400,7 +438,7 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 					this->blobs_[1]->cpu_data(),
 					output + output_offset_ * g, M,
 					//output_scratch_ + tid*OC_BLOCK*output_h*((output_w + 16 - 1)/16*16), 
-					num_);
+					input_padded_len);
 #endif
 		// this is the original caffe implementation: dense matrix multiplication
 		} else {

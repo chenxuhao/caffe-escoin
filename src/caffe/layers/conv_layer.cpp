@@ -1,5 +1,5 @@
 #include <vector>
-
+#include <omp.h> // cxh
 #include "caffe/layers/conv_layer.hpp"
 
 namespace caffe {
@@ -27,7 +27,7 @@ void ConvolutionLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
   Timer timer;
   timer.Start();
   const Dtype* weight = this->blobs_[0]->cpu_data();
-#pragma omp parallel for
+//#pragma omp parallel for // cxh
   for (int i = 0; i < bottom.size(); ++i) {
     const Dtype* bottom_data = bottom[i]->cpu_data();
     Dtype* top_data = top[i]->mutable_cpu_data();

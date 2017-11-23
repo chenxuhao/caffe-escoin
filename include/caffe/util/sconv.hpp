@@ -9,11 +9,11 @@ void caffe_cpu_sconv(const Dtype *input_padded, int in_channels,
 		//int ncolblocks,
 		const Dtype *bias, Dtype *output, int out_channels,
 		//float *output_scratch, 
-		int ninputs) 
+		int input_padded_len) 
 {
 	const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
 	const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
-	assert(output_h*output_w == N);
+	//assert(output_h*output_w == N);
 	int begin = 0;
 	int end = out_channels;
 	if (dilation_h != 1 || dilation_w != 1) {
