@@ -5,6 +5,7 @@
 #include "caffe/layers/base_conv_layer.hpp"
 #include "caffe/util/im2col.hpp"
 #include "caffe/util/math_functions.hpp"
+#include "caffe/util/sconv.hpp" // cxh
 
 namespace caffe {
 
@@ -332,15 +333,16 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 	Timer timer;
 	timer.Start();
 	for (int g = 0; g < group_; ++g) {
-		const int M = conv_out_channels_ /group_;
-		const int N = conv_out_spatial_dim_;
-		const int K = kernel_dim_;
+		const int M = conv_out_channels_ / group_;
 		const int row_offset = conv_out_channels_ /group_ + 1;
 		const int *row_offsets = nz_weight_index_pointers_.cpu_data() + row_offset * g;
 		int nnz = row_offsets[M];
 		Dtype sparsity = (Dtype)1.0 - (Dtype)nnz/ (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
 		if(sparsity > (Dtype)0.6) {
 			// cxh: only do this when sparsity > 60%
+#ifdef MKL_CSRMM
+			const int N = conv_out_spatial_dim_;
+			const int K = kernel_dim_;
 			//printf("MKL sparse weight matrix multi. dense feature map matrix\n");
 			caffe_cpu_sparse_csrmm(M, N, K, (Dtype)1.,
 					nz_weight_values_.cpu_data() + weight_offset_ * g,
@@ -349,6 +351,58 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 					nz_weight_index_pointers_.cpu_data() + row_offset * g + 1,
 					col_buff + col_offset_ * g,
 					(Dtype)0., output + output_offset_ * g);
+#else
+			// direct sparse convolution
+			int height = conv_input_shape_.cpu_data()[1];
+			int width = conv_input_shape_.cpu_data()[2];
+			int kernel_h = kernel_shape_.cpu_data()[0];
+			int kernel_w = kernel_shape_.cpu_data()[1];
+			int pad_h = pad_.cpu_data()[0];
+			int pad_w = pad_.cpu_data()[1];
+			int stride_h = stride_.cpu_data()[0];
+			int stride_w = stride_.cpu_data()[1];
+			int dilation_h = dilation_.cpu_data()[0];
+			int dilation_w = dilation_.cpu_data()[1];
+			//const int output_h = this->output_shape_[0];
+			//const int output_w = this->output_shape_[1];
+			//const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
+			//const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
+			//assert(output_h*output_w == N);
+
+			Dtype *input_padded;
+			int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
+			input_padded = new Dtype[input_padded_len];
+			assert(input_padded);
+			for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
+				memset(input_padded + in_channel * (height + pad_h) * (width + pad_w),
+						0, sizeof(Dtype) * pad_h * (width + pad_w));
+				for (int input_row = 0; input_row < height; ++input_row) {
+					memset(input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w),
+							0, sizeof(Dtype) * pad_w);
+					memcpy(input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
+							input + (in_channel * height + input_row) * width, sizeof(Dtype) * width);
+				}
+			}
+			memset(input_padded + conv_in_channels_ * (height + pad_h) * (width + pad_w),
+					0,sizeof(Dtype) * pad_h * (width + 2 * pad_w));
+
+			const int *rowptr = nz_weight_index_pointers_.cpu_data() + row_offset * g;
+			const Dtype *values = nz_weight_values_.cpu_data()+ weight_offset_ * g;
+			const int *colidx = nz_weight_indices_.cpu_data()+ weight_offset_ * g;
+			const Dtype *in_temp = input_padded + conv_in_channels_/group_ * g * (height + pad_h) * (width + pad_w);
+			caffe_cpu_sconv<Dtype>(in_temp, conv_in_channels_/group_, height, width, 
+					pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
+					rowptr, colidx, values, kernel_h, kernel_w,
+					//(const int **)(&weight_rowptr_blocked_[0] + g*ncolblock),
+					//(const int **)(&weight_colidx_blocked_[0] + g*ncolblock),
+					//(const float **)(&weight_values_blocked_[0] + g*ncolblock),
+					//ncolblock, 
+					this->blobs_[1]->cpu_data(),
+					output + output_offset_ * g, M,
+					//output_scratch_ + tid*OC_BLOCK*output_h*((output_w + 16 - 1)/16*16), 
+					num_);
+#endif
+		// this is the original caffe implementation: dense matrix multiplication
 		} else {
 			caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
 					group_, conv_out_spatial_dim_, kernel_dim_,
