@@ -21,7 +21,7 @@ class BaseConvolutionLayer : public Layer<Dtype> {
  public:
   explicit BaseConvolutionLayer(const LayerParameter& param)
       : Layer<Dtype>(param), input_padded_(NULL), output_scratch_(NULL) {}
-  //virtual ~BaseConvolutionLayer();
+  virtual ~BaseConvolutionLayer();
   virtual void WeightAlign(); // cxh: transform dense weight matrix to sparse
   virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top);
@@ -190,7 +190,6 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   vector<int *> weight_rowptr_blocked_;
   vector<int *> weight_colidx_blocked_;
   vector<Dtype *> weight_values_blocked_;
-
   //Blob<Dtype> weight_buffer_; //store nonzero weights in the continuous memory
 };
 
