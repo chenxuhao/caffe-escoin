@@ -78,12 +78,12 @@ void caffe_cpu_blocked_sconv(const Dtype *input_padded, int in_channels,
 	//const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
 	//const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
 	if (dilation_h != 1 || dilation_w != 1) {
-		caffe_cpu_naive_sconv<Dtype>(input_padded, in_channels, height, width, 
+		caffe_cpu_sconv<Dtype>(input_padded, in_channels, height, width, 
 				pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
 				rowptr, colidx, values, kernel_h, kernel_w, bias,
 				output, out_channels, input_padded_len);
 	} else {
-		caffe_cpu_naive_sconv<Dtype>(input_padded, in_channels, height, width, 
+		caffe_cpu_sconv<Dtype>(input_padded, in_channels, height, width, 
 				pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
 				rowptr, colidx, values, kernel_h, kernel_w, bias,
 				output, out_channels, input_padded_len);
