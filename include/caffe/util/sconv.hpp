@@ -1,3 +1,16 @@
+#include "intrinsic.hpp"
+static const int OC_BLOCK = 16;
+
+static int get_col_major_ic_block(int nnz, int num_out_channels, int num_in_channels) {
+	// # of in-channels to have on average 32 non-zeros per out-channel
+	double nnz_per_oc_and_ic = (double)nnz/num_out_channels/num_in_channels;
+	int ret = std::max(8, 1 << (int)round(log2(std::max(1., 32/nnz_per_oc_and_ic))));
+	ret = std::min(num_in_channels, ret);
+	while (num_in_channels%ret != 0) {
+		++ret;
+	}
+	return ret;
+}
 
 template <typename Dtype>
 void caffe_cpu_sconv(const Dtype *input_padded, int in_channels,
@@ -5,10 +18,7 @@ void caffe_cpu_sconv(const Dtype *input_padded, int in_channels,
 		int stride_h, int stride_w, int dilation_h, int dilation_w,
 		const int *rowptr, const int *colidx, const Dtype *values,
 		int kernel_h, int kernel_w,
-		//const int **rowptr_blocked, const int **colidx_blocked, const float **values_blocked,
-		//int ncolblocks,
 		const Dtype *bias, Dtype *output, int out_channels,
-		//float *output_scratch, 
 		int input_padded_len) 
 {
 	const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
@@ -49,5 +59,33 @@ void caffe_cpu_sconv(const Dtype *input_padded, int in_channels,
 				}
 			}
 		}
+	}
+}
+
+
+template <typename Dtype>
+void caffe_cpu_blocked_sconv(const Dtype *input_padded, int in_channels,
+		int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		const int *rowptr, const int *colidx, const Dtype *values,
+		int kernel_h, int kernel_w, const int **rowptr_blocked, 
+		const int **colidx_blocked, const Dtype **values_blocked,
+		int ncolblocks,
+		const Dtype *bias, Dtype *output, int out_channels,
+		Dtype *output_scratch, 
+		int input_padded_len) 
+{
+	//const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
+	//const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
+	if (dilation_h != 1 || dilation_w != 1) {
+		caffe_cpu_naive_sconv<Dtype>(input_padded, in_channels, height, width, 
+				pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
+				rowptr, colidx, values, kernel_h, kernel_w, bias,
+				output, out_channels, input_padded_len);
+	} else {
+		caffe_cpu_naive_sconv<Dtype>(input_padded, in_channels, height, width, 
+				pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
+				rowptr, colidx, values, kernel_h, kernel_w, bias,
+				output, out_channels, input_padded_len);
 	}
 }

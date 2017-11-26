@@ -764,7 +764,7 @@ void Net<Dtype>::CopyTrainedLayersFrom(const NetParameter& param) {
       const bool kReshape = false;
       target_blobs[j]->FromProto(source_layer.blobs(j), kReshape);
     }
-		layers_[target_layer_id]->WeightAlign(); // cxh
+    layers_[target_layer_id]->WeightAlign(); // cxh
   }
 }
 

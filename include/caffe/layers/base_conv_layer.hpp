@@ -20,7 +20,8 @@ template <typename Dtype>
 class BaseConvolutionLayer : public Layer<Dtype> {
  public:
   explicit BaseConvolutionLayer(const LayerParameter& param)
-      : Layer<Dtype>(param) {}
+      : Layer<Dtype>(param), input_padded_(NULL), output_scratch_(NULL) {}
+  virtual ~BaseConvolutionLayer();
   virtual void WeightAlign(); // cxh: transform dense weight matrix to sparse
   virtual void LayerSetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top);
@@ -172,20 +173,25 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   Blob<Dtype> bias_multiplier_;
 
   // cxh
-  Blob<Dtype> weight_buffer_; //store nonzero weights in the continuous memory
-#if 0
-    Blob<Dtype> nonzero_elements_buffer_;
-    Blob<int> nonzero_indices_buffer_;
-    Blob<int> index_pointers_buffer_;
-    Blob<int> nonzero_per_rowcol_buffer_;
-#endif
-    //Three blobs for sparse weight storage in CSC/CSR format
-    Blob<Dtype> nz_weight_values_;//nonzero elements
-    Blob<int> nz_weight_indices_;//index of nonzero
-    Blob<int> nz_weight_index_pointers_;//pointer(index) of indices
-    Blob<int> nz_per_row_;//nonzero per row for cusparse
-    vector<int> nz_num_;//the number of nonzero for cusparse
-		Blob<Dtype> transposed_output_buffer_;
+  //Three blobs for sparse weight storage in CSC/CSR format
+  Blob<Dtype> nz_weight_values_;//nonzero elements
+  Blob<int> nz_weight_indices_;//index of nonzero
+  Blob<int> nz_weight_index_pointers_;//pointer(index) of indices
+  Blob<int> nz_per_row_;//nonzero per row for cusparse
+  vector<int> nz_num_;//the number of nonzero for cusparse
+  Blob<Dtype> transposed_output_buffer_;
+  Dtype *input_padded_;
+  Dtype *output_scratch_;
+  /** weight sparse matrix */
+  vector<int *> weight_rowptr_;
+  vector<int *> weight_colidx_;
+  vector<Dtype *> weight_values_;
+  /** column blocked weight sparse matrix used for sconv345 */
+  vector<int *> weight_rowptr_blocked_;
+  vector<int *> weight_colidx_blocked_;
+  vector<Dtype *> weight_values_blocked_;
+
+  //Blob<Dtype> weight_buffer_; //store nonzero weights in the continuous memory
 };
 
 }  // namespace caffe
