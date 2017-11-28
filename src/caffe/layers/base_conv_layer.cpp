@@ -8,6 +8,8 @@
 #include "caffe/util/sconv.hpp" // cxh
 #define BLOCKED_SCONV
 //#define MKL_CSRMM
+//#define USE_CUSPARSE // cxh
+//#define SPARSE_WEIGHT // cxh
 namespace caffe {
 // cxh
 template <typename Dtype>
@@ -144,7 +146,7 @@ void BaseConvolutionLayer<Dtype>::WeightAlign(){
 							int num_of_non_zero_out_channels = 0;
 							const int *rowptr = weight_rowptr_[g];
 							assert(nnz == rowptr[M]);
-							int col_major_ic_block = get_col_major_ic_block(nnz, M, conv_in_channels_/group_);
+							//int col_major_ic_block = get_col_major_ic_block(nnz, M, conv_in_channels_/group_);
 							//LOG(INFO) << "col_major_ic_block = " << col_major_ic_block;	
 							assert(conv_in_channels_/group_%col_major_ic_block == 0);
 							// transform the indices for direct convolution
@@ -223,6 +225,7 @@ void BaseConvolutionLayer<Dtype>::WeightAlign(){
 							}
 						} // for each group
 						msg = posix_memalign((void **)&output_scratch_, 4096, sizeof(Dtype)*OC_BLOCK*output_h*((output_w + 16 - 1)/16*16)*num_threads);
+						if(msg) printf("ERROR: memalign failed\n");
 #endif // end BLOCKED_SCONV
 #endif // end MKL_CSRMM
 				      break; }
@@ -509,6 +512,7 @@ void BaseConvolutionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 		const Dtype* weights, Dtype* output, bool skip_im2col) {
+	int tid = 0;//omp_get_thread_num();
 	const Dtype* col_buff = input;
 	if (!is_1x1_) {
 		if (!skip_im2col) {
@@ -575,7 +579,6 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 
 			const Dtype *in_temp = input_padded + conv_in_channels_/group_ * g * (height + pad_h) * (width + pad_w);
 #ifdef BLOCKED_SCONV
-			int tid = 0;//omp_get_thread_num();
 			const int output_h = this->output_shape_[0];
 			const int output_w = this->output_shape_[1];
 			assert(output_h*output_w == conv_out_spatial_dim_);
@@ -696,6 +699,7 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 		} else {
 			// cxh: only do this when sparsity > 90%
 			//printf("sparse weight matrix multi. dense feature map matrix, sparsity=%f\n", sparsity);
+#ifdef USE_CUSPARSE
 			caffe_gpu_sparse_csrmm(conv_out_channels_ /group_,
 					conv_out_spatial_dim_, kernel_dim_, 
 					nz_num_[g], (Dtype)1., 
@@ -705,6 +709,56 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 					col_buff + col_offset_ * g, (Dtype)0., 
 					output + output_offset_ * g,
 					transposed_output_buffer_.mutable_gpu_data());
+#else
+			// cxh: direct sparse convolution
+			int height = conv_input_shape_.cpu_data()[1];
+			int width = conv_input_shape_.cpu_data()[2];
+			int kernel_h = kernel_shape_.cpu_data()[0];
+			int kernel_w = kernel_shape_.cpu_data()[1];
+			int pad_h = pad_.cpu_data()[0];
+			int pad_w = pad_.cpu_data()[1];
+			int stride_h = stride_.cpu_data()[0];
+			int stride_w = stride_.cpu_data()[1];
+			int dilation_h = dilation_.cpu_data()[0];
+			int dilation_w = dilation_.cpu_data()[1];
+
+			Dtype *d_input_padded;
+			int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
+			cudaMalloc((void **)&d_input_padded, sizeof(Dtype) * input_padded_len);
+			for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
+				cudaMemset(d_input_padded + in_channel * (height + pad_h) * (width + pad_w),
+						0, sizeof(Dtype) * pad_h * (width + pad_w));
+				for (int input_row = 0; input_row < height; ++input_row) {
+					cudaMemset(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w),
+							0, sizeof(Dtype) * pad_w);
+				//	cudaMemcpy(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
+				//			input + (in_channel * height + input_row) * width, sizeof(Dtype) * width, cudaMemcpyDeviceToDevice);
+				}
+			}
+/*			cudaMemset(d_input_padded + conv_in_channels_ * (height + pad_h) * (width + pad_w),
+					0, sizeof(Dtype) * pad_h * (width + 2 * pad_w));
+			const Dtype *in_temp = d_input_padded + conv_in_channels_/group_ * g * (height + pad_h) * (width + pad_w);
+
+			const int row_offset = conv_out_channels_ /group_ + 1;
+			const int M = conv_out_channels_ / group_;
+			const int *rowptr = nz_weight_index_pointers_.gpu_data() + row_offset * g;
+			const Dtype *values = nz_weight_values_.gpu_data()+ weight_offset_ * g;
+			const int *colidx = nz_weight_indices_.gpu_data()+ weight_offset_ * g;
+			caffe_gpu_sconv<Dtype>(in_temp, rowptr, colidx, values, 
+					height, width, pad_h, pad_w, stride_h, stride_w, 
+					dilation_h, dilation_w, kernel_h, kernel_w,
+					output + output_offset_ * g, M);
+*/
+			caffe_gpu_sparse_csrmm(conv_out_channels_ /group_,
+					conv_out_spatial_dim_, kernel_dim_, 
+					nz_num_[g], (Dtype)1., 
+					nz_weight_values_.gpu_data()+ weight_offset_ * g,
+					nz_weight_index_pointers_.gpu_data() + (conv_out_channels_ / group_ + 1) * g,
+					nz_weight_indices_.gpu_data()+ weight_offset_ * g,
+					col_buff + col_offset_ * g, (Dtype)0., 
+					output + output_offset_ * g,
+					transposed_output_buffer_.mutable_gpu_data());
+#endif
 		}
 	}
 }

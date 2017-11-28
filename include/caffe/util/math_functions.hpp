@@ -171,7 +171,7 @@ void caffe_gpu_gemm(const CBLAS_TRANSPOSE TransA,
     const Dtype alpha, const Dtype* A, const Dtype* B, const Dtype beta,
     Dtype* C);
 
-// sparse matrix A *  dense matrix B. A is stored in CSR format
+// cxh: sparse matrix A *  dense matrix B. A is stored in CSR format
 // transpose_C is required for temporary storage because of the column-major order of cusparse
 template <typename Dtype>
 void caffe_gpu_sparse_csrmm(const int M, const int N, const int K,
@@ -191,6 +191,14 @@ template <typename Dtype>
 void caffe_gpu_sparse_dense2csr(const int M, const int N,
     const Dtype* A, int* nnzPerRow, Dtype* A_nonzero_buf, 
 	int* A_idx_pointer_buf, int* A_nonzero_idx_buf, int *nnz_total);
+
+// cxh: direct sparse convolution on GPU
+template <typename Dtype>
+void caffe_gpu_sconv(const Dtype *input_padded,
+		const int *rowptr, const int *colidx, const Dtype *values,
+		int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		int kernel_h, int kernel_w, Dtype *output, int out_channels); 
 
 template <typename Dtype>
 void caffe_gpu_gemv(const CBLAS_TRANSPOSE TransA, const int M, const int N,

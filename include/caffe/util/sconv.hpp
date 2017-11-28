@@ -89,3 +89,4 @@ void caffe_cpu_blocked_sconv(const Dtype *input_padded, int in_channels,
 				output, out_channels, input_padded_len);
 	}
 }
+
