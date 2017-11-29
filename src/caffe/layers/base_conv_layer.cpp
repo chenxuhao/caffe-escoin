@@ -97,7 +97,12 @@ void BaseConvolutionLayer<Dtype>::WeightAlign(){
 							}
 						}
 #else
-						int num_threads = 1;//omp_get_max_threads();
+						omp_set_num_threads(1);
+						int num_threads = 1;
+						#pragma omp parallel
+						{
+						num_threads = omp_get_num_threads();
+						}
 						int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w) + VLEN - 1;
 						int msg = posix_memalign((void **)&input_padded_, 4096, sizeof(Dtype) * num_threads * input_padded_len);
 						memset(input_padded_, 4096, sizeof(Dtype) * num_threads * input_padded_len);
@@ -148,7 +153,7 @@ void BaseConvolutionLayer<Dtype>::WeightAlign(){
 							assert(nnz == rowptr[M]);
 							//int col_major_ic_block = get_col_major_ic_block(nnz, M, conv_in_channels_/group_);
 							//LOG(INFO) << "col_major_ic_block = " << col_major_ic_block;	
-							assert(conv_in_channels_/group_%col_major_ic_block == 0);
+							//assert(conv_in_channels_/group_%col_major_ic_block == 0);
 							// transform the indices for direct convolution
 							int *colidx = weight_colidx_[g];
 							for (int oc = 0; oc < M; ++oc) {
@@ -713,14 +718,14 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 			// cxh: direct sparse convolution
 			int height = conv_input_shape_.cpu_data()[1];
 			int width = conv_input_shape_.cpu_data()[2];
-			int kernel_h = kernel_shape_.cpu_data()[0];
-			int kernel_w = kernel_shape_.cpu_data()[1];
+			//int kernel_h = kernel_shape_.cpu_data()[0];
+			//int kernel_w = kernel_shape_.cpu_data()[1];
 			int pad_h = pad_.cpu_data()[0];
 			int pad_w = pad_.cpu_data()[1];
-			int stride_h = stride_.cpu_data()[0];
-			int stride_w = stride_.cpu_data()[1];
-			int dilation_h = dilation_.cpu_data()[0];
-			int dilation_w = dilation_.cpu_data()[1];
+			//int stride_h = stride_.cpu_data()[0];
+			//int stride_w = stride_.cpu_data()[1];
+			//int dilation_h = dilation_.cpu_data()[0];
+			//int dilation_w = dilation_.cpu_data()[1];
 
 			Dtype *d_input_padded;
 			int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
@@ -731,14 +736,14 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 				for (int input_row = 0; input_row < height; ++input_row) {
 					cudaMemset(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w),
 							0, sizeof(Dtype) * pad_w);
-				//	cudaMemcpy(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
-				//			input + (in_channel * height + input_row) * width, sizeof(Dtype) * width, cudaMemcpyDeviceToDevice);
+					cudaMemcpy(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
+							input + (in_channel * height + input_row) * width, sizeof(Dtype) * width, cudaMemcpyDeviceToDevice);
 				}
 			}
-/*			cudaMemset(d_input_padded + conv_in_channels_ * (height + pad_h) * (width + pad_w),
+			cudaMemset(d_input_padded + conv_in_channels_ * (height + pad_h) * (width + pad_w),
 					0, sizeof(Dtype) * pad_h * (width + 2 * pad_w));
+/*
 			const Dtype *in_temp = d_input_padded + conv_in_channels_/group_ * g * (height + pad_h) * (width + pad_w);
-
 			const int row_offset = conv_out_channels_ /group_ + 1;
 			const int M = conv_out_channels_ / group_;
 			const int *rowptr = nz_weight_index_pointers_.gpu_data() + row_offset * g;

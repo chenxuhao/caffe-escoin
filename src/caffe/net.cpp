@@ -4,6 +4,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <omp.h> // cxh
 
 #include "hdf5.h"
 
@@ -42,6 +43,16 @@ Net<Dtype>::Net(const string& param_file, Phase phase,
 
 template <typename Dtype>
 void Net<Dtype>::Init(const NetParameter& in_param) {
+  // cxh: set OpenMP num_threads. Somehow this can not be done in conv_layer, don't know why.
+  //::google::SetCommandLineOption("GLOG_minloglevel", "2");
+  omp_set_num_threads(4);
+  int num_threads = 1;
+#pragma omp parallel
+  {
+  num_threads = omp_get_num_threads();
+  }
+  printf("cxh debug: num_threads = %d\n", num_threads);
+
   // Set phase from the state.
   phase_ = in_param.state().phase();
   // Filter layers based on their include/exclude rules and
@@ -744,7 +755,7 @@ void Net<Dtype>::CopyTrainedLayersFrom(const NetParameter& param) {
       LOG(INFO) << "Ignoring source layer " << source_layer_name;
       continue;
     }
-    DLOG(INFO) << "Copying source layer " << source_layer_name;
+    //DLOG(INFO) << "Copying source layer " << source_layer_name;
     vector<shared_ptr<Blob<Dtype> > >& target_blobs =
         layers_[target_layer_id]->blobs();
     CHECK_EQ(target_blobs.size(), source_layer.blobs_size())
