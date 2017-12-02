@@ -7,7 +7,7 @@
 #include "caffe/util/math_functions.hpp"
 #include "caffe/util/sconv.hpp" // cxh
 //#define BLOCKED_SCONV
-#define LOWERING // cxh
+//#define LOWERING // cxh
 namespace caffe {
 // cxh
 template <typename Dtype>
@@ -36,13 +36,13 @@ BaseConvolutionLayer<Dtype>::~BaseConvolutionLayer()
 // cxh
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::WeightAlign(){
-	int num_threads = 1;
+/*	int num_threads = 1;
 	omp_set_num_threads(4);
 #pragma omp parallel
 	{
 		num_threads = omp_get_num_threads();
 	}
-	printf("num_threads = %d\n", num_threads);
+	printf("num_threads = %d\n", num_threads);*/
 	CHECK_EQ(this->blobs_[0]->num_axes(),4);//caffe now supports any dimension
 	//const LayerParameter& layerparam = this->layer_param();
 	//LOG(INFO)<<"layer\t"<<layerparam.name()<<"\t"<<"has sparsity of "<< this->blobs_[0]->GetSparsity();
@@ -530,17 +530,54 @@ void BaseConvolutionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 		const Dtype* weights, Dtype* output, bool skip_im2col) {
-	//omp_set_num_threads(4);
 	//int tid = omp_get_thread_num();
 	const Dtype* col_buff = input;
+#ifdef LOWERING
 	if (!is_1x1_) {
 		if (!skip_im2col) {
 			conv_im2col_cpu(input, col_buffer_.mutable_cpu_data());
 		}
 		col_buff = col_buffer_.cpu_data();
 	}
-	Timer timer;
-	timer.Start();
+#else
+	// direct sparse convolution
+	int height = conv_input_shape_.cpu_data()[1];
+	int width = conv_input_shape_.cpu_data()[2];
+	int kernel_h = kernel_shape_.cpu_data()[0];
+	int kernel_w = kernel_shape_.cpu_data()[1];
+	int pad_h = pad_.cpu_data()[0];
+	int pad_w = pad_.cpu_data()[1];
+	int stride_h = stride_.cpu_data()[0];
+	int stride_w = stride_.cpu_data()[1];
+	int dilation_h = dilation_.cpu_data()[0];
+	int dilation_w = dilation_.cpu_data()[1];
+	//const int output_h = this->output_shape_[0];
+	//const int output_w = this->output_shape_[1];
+	//const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
+	//const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
+	//assert(output_h*output_w == N);
+	Dtype *input_padded;
+	int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
+	if(pad_h == 0 && pad_w == 0)
+		//if (0)
+		input_padded = (Dtype *)input;
+	else {
+		input_padded = input_padded_;
+		//input_padded = new Dtype[input_padded_len];
+		for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
+			//	memset(input_padded + in_channel * (height + pad_h) * (width + pad_w),
+			//			0, sizeof(Dtype) * pad_h * (width + pad_w));
+			for (int input_row = 0; input_row < height; ++input_row) {
+				//		memset(input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w),
+				//				0, sizeof(Dtype) * pad_w);
+				memcpy(input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
+						input + (in_channel * height + input_row) * width, sizeof(Dtype) * width);
+			}
+		}
+		//memset(input_padded + conv_in_channels_ * (height + pad_h) * (width + pad_w),
+		//		0,sizeof(Dtype) * pad_h * (width + 2 * pad_w));
+	}
+#endif
 	for (int g = 0; g < group_; ++g) {
 		const int M = conv_out_channels_ / group_;
 		const int row_offset = conv_out_channels_ /group_ + 1;
@@ -548,7 +585,7 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 		int nnz = row_offsets[M];
 		Dtype sparsity = (Dtype)1.0 - (Dtype)nnz/ (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
 		//if(sparsity > (Dtype)0.6) {
-		if(0) {
+		if(1) {
 			// cxh: only do this when sparsity > 60%
 #ifdef LOWERING
 			const int N = conv_out_spatial_dim_;
@@ -563,46 +600,6 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 					(Dtype)0., output + output_offset_ * g);
 #else
 			// direct sparse convolution
-			int height = conv_input_shape_.cpu_data()[1];
-			int width = conv_input_shape_.cpu_data()[2];
-			int kernel_h = kernel_shape_.cpu_data()[0];
-			int kernel_w = kernel_shape_.cpu_data()[1];
-			int pad_h = pad_.cpu_data()[0];
-			int pad_w = pad_.cpu_data()[1];
-			int stride_h = stride_.cpu_data()[0];
-			int stride_w = stride_.cpu_data()[1];
-			int dilation_h = dilation_.cpu_data()[0];
-			int dilation_w = dilation_.cpu_data()[1];
-			//const int output_h = this->output_shape_[0];
-			//const int output_w = this->output_shape_[1];
-			//const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
-			//const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
-			//assert(output_h*output_w == N);
-			Timer timer;
-			timer.Start();
-			Dtype *input_padded;
-			int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
-			if(pad_h == 0 && pad_w == 0)
-			//if (0)
-				input_padded = (Dtype *)input;
-			else {
-				input_padded = input_padded_;
-				//input_padded = new Dtype[input_padded_len];
-				for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
-				//	memset(input_padded + in_channel * (height + pad_h) * (width + pad_w),
-				//			0, sizeof(Dtype) * pad_h * (width + pad_w));
-					for (int input_row = 0; input_row < height; ++input_row) {
-				//		memset(input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w),
-				//				0, sizeof(Dtype) * pad_w);
-						memcpy(input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
-								input + (in_channel * height + input_row) * width, sizeof(Dtype) * width);
-					}
-				}
-				//memset(input_padded + conv_in_channels_ * (height + pad_h) * (width + pad_w),
-				//		0,sizeof(Dtype) * pad_h * (width + 2 * pad_w));
-			}
-			timer.Stop();
-			//printf("[cxh] %s memcpy time: %.2f ms\n", this->layer_param().name().c_str(), timer.MicroSeconds()/1000);
 			const Dtype *in_temp = input_padded + conv_in_channels_/group_ * g * (height + pad_h) * (width + pad_w);
 #ifdef BLOCKED_SCONV
 			const int output_h = this->output_shape_[0];
@@ -643,12 +640,8 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 					group_, conv_out_spatial_dim_, kernel_dim_,
 					(Dtype)1., weights + weight_offset_ * g, col_buff + col_offset_ * g,
 					(Dtype)0., output + output_offset_ * g);
-	//omp_set_num_threads(1);
 		}
 	}
-	timer.Stop();
-	//LOG(INFO) << this->layer_param().name() << ": "
-	//<< timer.MilliSeconds() << " ms (Compressed Row Storage Timing)";
 }
 
 template <typename Dtype>

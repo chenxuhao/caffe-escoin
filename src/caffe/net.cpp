@@ -43,16 +43,6 @@ Net<Dtype>::Net(const string& param_file, Phase phase,
 
 template <typename Dtype>
 void Net<Dtype>::Init(const NetParameter& in_param) {
-  // cxh: set OpenMP num_threads. Somehow this has to be 1 (i.e. sequential), don't know why.
-  //::google::SetCommandLineOption("GLOG_minloglevel", "2");
-  omp_set_num_threads(1);
-  int num_threads = 1;
-#pragma omp parallel
-  {
-  num_threads = omp_get_num_threads();
-  }
-  printf("cxh debug: num_threads = %d\n", num_threads);
-
   // Set phase from the state.
   phase_ = in_param.state().phase();
   // Filter layers based on their include/exclude rules and
