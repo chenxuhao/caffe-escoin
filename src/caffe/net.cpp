@@ -43,9 +43,9 @@ Net<Dtype>::Net(const string& param_file, Phase phase,
 
 template <typename Dtype>
 void Net<Dtype>::Init(const NetParameter& in_param) {
-  // cxh: set OpenMP num_threads. Somehow this can not be done in conv_layer, don't know why.
+  // cxh: set OpenMP num_threads. Somehow this has to be 1 (i.e. sequential), don't know why.
   //::google::SetCommandLineOption("GLOG_minloglevel", "2");
-  omp_set_num_threads(4);
+  omp_set_num_threads(1);
   int num_threads = 1;
 #pragma omp parallel
   {
@@ -521,6 +521,15 @@ void Net<Dtype>::AppendParam(const NetParameter& param, const int layer_id,
       }
     }
   }
+}
+
+template <typename Dtype>
+double Net<Dtype>::GetTotalTime(){
+	double total = 0;
+	for (int i = 0; i <=layers_.size() - 1; ++i) {
+		total += layers_[i]->GetTestTime();
+	}
+	return total;
 }
 
 template <typename Dtype>

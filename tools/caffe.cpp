@@ -314,6 +314,7 @@ int test() {
 		printf("[cxh] Batch %d, %s = %.5f\n", i, output_name.c_str(), score);
       }
     }
+    printf("[cxh] Total forwarding time: %.2f ms\n", caffe_net.GetTotalTime()/1000);
   }
   loss /= FLAGS_iterations;
   LOG(INFO) << "Loss: " << loss;

@@ -20,7 +20,7 @@ void caffe_cpu_gemm(const CBLAS_TRANSPOSE TransA,
     const Dtype alpha, const Dtype* A, const Dtype* B, const Dtype beta,
     Dtype* C);
 
-// sparse matrix A *  dense matrix B
+// cxh: sparse matrix A *  dense matrix B
 // A is stored in CSR format
 template <typename Dtype>
 void caffe_cpu_sparse_csrmm(const int M, const int N, const int K,
@@ -29,11 +29,21 @@ void caffe_cpu_sparse_csrmm(const int M, const int N, const int K,
 	const Dtype* B,
 	const Dtype beta,Dtype* C);
 
-// dense matrix A to sparse matrix A in CSR format
+// cxh: dense matrix A to sparse matrix A in CSR format
 template <typename Dtype>
 void caffe_cpu_sparse_dense2csr(const int M, const int N,
 	Dtype* A,
 	Dtype* A_nonzero_buf, int* A_nonzero_idx_buf, int* A_idx_pointer_buf);
+
+// cxh: direct sparse convolution
+template <typename Dtype>
+void caffe_cpu_sconv(const Dtype *input_padded, int in_channels,
+		int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		const int *rowptr, const int *colidx, const Dtype *values,
+		int kernel_h, int kernel_w,
+		const Dtype *bias, Dtype *output, int out_channels,
+		int input_padded_len);
 
 template <typename Dtype>
 void caffe_cpu_gemv(const CBLAS_TRANSPOSE TransA, const int M, const int N,
@@ -199,6 +209,10 @@ void caffe_gpu_sconv(const Dtype *input_padded,
 		int height, int width, int pad_h, int pad_w,
 		int stride_h, int stride_w, int dilation_h, int dilation_w,
 		int kernel_h, int kernel_w, Dtype *output, int out_channels); 
+
+// cxh: strech the input vector for direct sconv
+void caffe_gpu_stretch(const int *rowptr, int *colidx, int M, 
+		int height, int width, int pad_h, int pad_w, int kernel_h, int kernel_w);
 
 template <typename Dtype>
 void caffe_gpu_gemv(const CBLAS_TRANSPOSE TransA, const int M, const int N,

@@ -156,21 +156,23 @@ __global__ void sconv_kernel1(const int *rowptr, const int *colidx, const Dtype 
 		Dtype *output, int out_channels, const int output_h, const int output_w) {
 	int output_row = blockIdx.x * blockDim.x + threadIdx.x;
 	int output_col = blockIdx.y * blockDim.y + threadIdx.y;
-	int begin = 0;
-	int end = out_channels;
-	for (int out_channel = begin; out_channel < end; ++out_channel) {
-		Dtype sum = 0;
-		for (int j = rowptr[out_channel]; j < rowptr[out_channel + 1]; ++j) {
-			int col = colidx[j];
-			int kernel_col = col%(width + pad_w);
-			int kernel_row = (col/(width + pad_w))%(height + pad_h);
-			int in_channel = col/((width + pad_w)*(height + pad_h));
-			int input_row = kernel_row * dilation_h + output_row * stride_h;
-			int input_col = kernel_col * dilation_w + output_col * stride_w;
-			sum += values[j]*input_padded[(in_channel * (height + pad_h) + input_row) * (width + pad_w) + input_col];
-		}
-		output[(out_channel*output_h + output_row)*output_w + output_col] = sum;
-	}
+	int out_channel = blockIdx.z * blockDim.z + threadIdx.z;
+	if (output_row < output_h)
+		if (output_col < output_w)
+			if(out_channel < out_channels) {
+			//for (int out_channel = 0; out_channel < out_channels; ++out_channel) {
+				Dtype sum = 0;
+				for (int j = rowptr[out_channel]; j < rowptr[out_channel + 1]; ++j) {
+					int col = colidx[j];
+					int kernel_col = col%(width + pad_w);
+					int kernel_row = (col/(width + pad_w))%(height + pad_h);
+					int in_channel = col/((width + pad_w)*(height + pad_h));
+					int input_row = kernel_row * dilation_h + output_row * stride_h;
+					int input_col = kernel_col * dilation_w + output_col * stride_w;
+					sum += values[j]*input_padded[(in_channel * (height + pad_h) + input_row) * (width + pad_w) + input_col];
+				}
+				output[(out_channel*output_h + output_row)*output_w + output_col] = sum;
+			}
 }
 
 template <typename Dtype>
@@ -180,16 +182,20 @@ __global__ void sconv_kernel2(const int *rowptr, const int *colidx, const Dtype 
 		Dtype *output, int out_channels, const int output_h, const int output_w) {
 	int output_row = blockIdx.x * blockDim.x + threadIdx.x;
 	int output_col = blockIdx.y * blockDim.y + threadIdx.y;
-	int begin = 0;
-	int end = out_channels;
-	const Dtype *in_temp2 = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
-	for (int out_channel = begin; out_channel < end; ++out_channel) {
-		Dtype sum = 0;
-		for (int j = rowptr[out_channel]; j < rowptr[out_channel + 1]; ++j) {
-			//assert(in_temp2 + colidx[j] - input_padded < input_padded_len);
-			sum += values[j]*in_temp2[colidx[j]];
+	int out_channel = blockIdx.z * blockDim.z + threadIdx.z;
+	if (output_row < output_h) {
+		if (output_col < output_w) {
+			if (out_channel < out_channels) {
+			//for (int out_channel = 0; out_channel < out_channels; ++out_channel) {
+				const Dtype *in_temp2 = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
+				Dtype sum = 0;
+				for (int j = rowptr[out_channel]; j < rowptr[out_channel + 1]; ++j) {
+					//assert(in_temp2 + colidx[j] - input_padded < input_padded_len);
+					sum += values[j]*in_temp2[colidx[j]];
+				}
+				output[(out_channel*output_h + output_row)*output_w + output_col] = sum;
+			}
 		}
-		output[(out_channel*output_h + output_row)*output_w + output_col] = sum;
 	}
 }
 
@@ -203,15 +209,15 @@ void caffe_gpu_sconv(const Dtype *input_padded,
 	const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
 	const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
 	const int TILE_SZ = 16;//CAFFE_CUDA_NUM_THREADS;
-	dim3 grid( output_h/TILE_SZ, output_w/TILE_SZ ), threads( TILE_SZ, TILE_SZ );
+	dim3 grid( (output_h-1)/TILE_SZ+1, (output_w-1)/TILE_SZ+1, (out_channels-1)/4+1 ), threads( TILE_SZ, TILE_SZ, 4 );
 	if (dilation_h != 1 || dilation_w != 1) {
-		sconv_kernel1<Dtype><<<grid, threads>>>(
-			rowptr, colidx, values, input_padded, height, width, pad_h, pad_w, stride_h, stride_w, 
-			dilation_h, dilation_w, kernel_h, kernel_w, output, out_channels, output_h, output_w);
+		sconv_kernel1<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
+					height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
+					kernel_h, kernel_w, output, out_channels, output_h, output_w);
 	} else {
-		sconv_kernel2<Dtype><<<grid, threads>>>(
-			rowptr, colidx, values, input_padded, height, width, pad_h, pad_w, stride_h, stride_w, 
-			dilation_h, dilation_w, kernel_h, kernel_w, output, out_channels, output_h, output_w);
+		sconv_kernel2<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
+					height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
+					kernel_h, kernel_w, output, out_channels, output_h, output_w);
 	}
 }
 
@@ -224,6 +230,29 @@ template void caffe_gpu_sconv<float>(const float *input_padded, const int *rowpt
 template void caffe_gpu_sconv<double>(const double *input_padded, const int *rowptr, const int *colidx, const double *values,
 		int height, int width, int pad_h, int pad_w, int stride_h, int stride_w, int dilation_h, int dilation_w, 
 		int kernel_h, int kernel_w, double *output, int out_channels);
+
+__global__ void stretch_kernel(const int *rowptr, int *colidx, int M,
+		int height, int width, int pad_h, int pad_w, int kernel_h, int kernel_w) {
+	int out_channel = blockIdx.x * blockDim.x + threadIdx.x;
+	if(out_channel < M) {
+		for (int j = rowptr[out_channel]; j < rowptr[out_channel + 1]; ++j) {
+			int col = colidx[j];
+			int kernel_col = col % kernel_w;
+			int kernel_row = (col / kernel_w) % kernel_h;
+			int in_channel = col / (kernel_w * kernel_h);
+			//assert(in_channel < conv_in_channels_);
+			colidx[j] = (in_channel * (height + pad_h) + kernel_row) * (width + pad_w) + kernel_col;
+		}
+	}
+}
+
+void caffe_gpu_stretch(const int *rowptr, int *colidx, int M, 
+		int height, int width, int pad_h, int pad_w, int kernel_h, int kernel_w) {
+	int nthreads = CAFFE_CUDA_NUM_THREADS;
+	int nblocks = (M - 1) / nthreads + 1;
+	stretch_kernel<<<nblocks, nthreads>>>(rowptr, colidx, M, 
+			height, width, pad_h, pad_w, kernel_h, kernel_w);
+}
 // end of cxh
 
 template <>

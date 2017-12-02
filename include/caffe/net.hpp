@@ -227,6 +227,9 @@ class Net {
   static bool StateMeetsRule(const NetState& state, const NetStateRule& rule,
       const string& layer_name);
 
+  // cxh
+  double GetTotalTime();
+
   // Invoked at specific points during an iteration
   class Callback {
    protected:

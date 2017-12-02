@@ -2,7 +2,7 @@
 #include <boost/random.hpp>
 
 #include <limits>
-
+#include <omp.h> // cxh
 #include "caffe/common.hpp"
 #include "caffe/util/math_functions.hpp"
 #include "caffe/util/rng.hpp"
@@ -87,7 +87,20 @@ void caffe_cpu_sparse_dense2csr<float>(const int M, const int N,
 			<<"because there is no space in the arrays acsr and ja according to the value nzmax.";
 	}
 #else
-	NOT_IMPLEMENTED;
+	int nnz = 0;
+	A_idx_pointer_buf[0] = 0;
+	for(int i = 0; i < M; i ++) {
+		int nnz_per_row = 0;
+		for(int j = 0; j < N; j ++) {
+			if(A[i*N+j] != 0) {
+				A_nonzero_buf[nnz] = A[i*N+j];
+				A_nonzero_idx_buf[nnz] = j;
+				nnz_per_row ++;
+				nnz ++;
+			}
+		}
+		A_idx_pointer_buf[i+1] = A_idx_pointer_buf[i] + nnz_per_row;
+	}
 #endif
 }
 
@@ -108,6 +121,108 @@ void caffe_cpu_sparse_dense2csr<double>(const int M, const int N,
 #else
 	NOT_IMPLEMENTED;
 #endif
+}
+
+template <typename Dtype>
+void caffe_cpu_sconv(const Dtype *input_padded, int in_channels,
+		int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		const int *rowptr, const int *colidx, const Dtype *values,
+		int kernel_h, int kernel_w,
+		const Dtype *bias, Dtype *output, int out_channels,
+		int input_padded_len) 
+{
+	const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
+	const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
+	//assert(output_h*output_w == N);
+	int begin = 0;
+	int end = out_channels;
+	if (dilation_h != 1 || dilation_w != 1) {
+//#pragma omp parallel for collapse(2)
+		for (int output_row = 0; output_row < output_h; ++output_row) {
+			for (int output_col = 0; output_col < output_w; ++output_col) {
+				for (int out_channel = begin; out_channel < end; ++out_channel) {
+					Dtype sum = 0;
+					for (int j = rowptr[out_channel]; j < rowptr[out_channel + 1]; ++j) {
+						int col = colidx[j];
+						int kernel_col = col%(width + pad_w);
+						int kernel_row = (col/(width + pad_w))%(height + pad_h);
+						int in_channel = col/((width + pad_w)*(height + pad_h));
+						int input_row = kernel_row * dilation_h + output_row * stride_h;
+						int input_col = kernel_col * dilation_w + output_col * stride_w;
+						sum += values[j] * input_padded[(in_channel * (height + pad_h) + input_row) * (width + pad_w) + input_col];
+					}
+					output[(out_channel * output_h + output_row) * output_w + output_col] = sum;
+				}
+			}
+		}
+	}
+	else {
+		for (int output_row = 0; output_row < output_h; ++output_row) {
+			for (int output_col = 0; output_col < output_w; ++output_col) {
+				const Dtype *in_temp2 = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
+				for (int out_channel = begin; out_channel < end; ++out_channel) {
+					Dtype sum = 0;
+					for (int j = rowptr[out_channel]; j < rowptr[out_channel + 1]; ++j) {
+						assert(in_temp2 + colidx[j] - input_padded < input_padded_len);
+						sum += values[j] * in_temp2[colidx[j]];
+					}
+					output[(out_channel * output_h + output_row) * output_w + output_col] = sum;
+				}
+			}
+		}
+	}
+}
+
+template void caffe_cpu_sconv<int>(const int *input_padded, int in_channels,
+		int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		const int *rowptr, const int *colidx, const int *values,
+		int kernel_h, int kernel_w,
+		const int*bias, int *output, int out_channels,
+		int input_padded_len);
+
+template void caffe_cpu_sconv<float>(const float *input_padded, int in_channels,
+		int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		const int *rowptr, const int *colidx, const float *values,
+		int kernel_h, int kernel_w,
+		const float *bias, float *output, int out_channels,
+		int input_padded_len);
+
+template void caffe_cpu_sconv<double>(const double *input_padded, int in_channels,
+		int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		const int *rowptr, const int *colidx, const double *values,
+		int kernel_h, int kernel_w,
+		const double *bias, double *output, int out_channels,
+		int input_padded_len);
+
+template <typename Dtype>
+void caffe_cpu_blocked_sconv(const Dtype *input_padded, int in_channels,
+		int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		const int *rowptr, const int *colidx, const Dtype *values,
+		int kernel_h, int kernel_w, const int **rowptr_blocked, 
+		const int **colidx_blocked, const Dtype **values_blocked,
+		int ncolblocks,
+		const Dtype *bias, Dtype *output, int out_channels,
+		Dtype *output_scratch, 
+		int input_padded_len) 
+{
+	//const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
+	//const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
+	if (dilation_h != 1 || dilation_w != 1) {
+		caffe_cpu_sconv<Dtype>(input_padded, in_channels, height, width, 
+				pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
+				rowptr, colidx, values, kernel_h, kernel_w, bias,
+				output, out_channels, input_padded_len);
+	} else {
+		caffe_cpu_sconv<Dtype>(input_padded, in_channels, height, width, 
+				pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
+				rowptr, colidx, values, kernel_h, kernel_w, bias,
+				output, out_channels, input_padded_len);
+	}
 }
 // end cxh
 

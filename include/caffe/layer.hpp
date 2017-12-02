@@ -49,6 +49,7 @@ class Layer {
           blobs_[i]->FromProto(layer_param_.blobs(i));
         }
       }
+      test_time_ = 0; // cxh
     }
   virtual ~Layer() {}
 
@@ -67,6 +68,7 @@ class Layer {
    */
   void SetUp(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
+    //InitMutex();
     CheckBlobCounts(bottom, top);
     LayerSetUp(bottom, top);
     Reshape(bottom, top);
@@ -94,6 +96,8 @@ class Layer {
 
   // cxh: typically for convolutional layers, to align nonzero weights together
   virtual void WeightAlign() {}
+  virtual double GetTestTime() { return test_time_;} // time consumption
+  //virtual void SetTestTime(double t) { test_time_ = t;}
 
   /**
    * @brief Adjust the shapes of top blobs and internal buffers to accommodate
@@ -310,6 +314,9 @@ class Layer {
    *  the objective function. */
   vector<Dtype> loss_;
 
+  // cxh
+  double test_time_;
+
   /** @brief Using the CPU device, compute the layer output. */
   virtual void Forward_cpu(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) = 0;
@@ -407,6 +414,17 @@ class Layer {
   }
 
  private:
+
+  /** The mutex for sequential forward if this layer is shared */
+  shared_ptr<boost::mutex> forward_mutex_;
+
+  /** Initialize forward_mutex_ */
+  //void InitMutex();
+  /** Lock forward_mutex_ if this layer is shared */
+  //void Lock();
+  /** Unlock forward_mutex_ if this layer is shared */
+  //void Unlock();
+
   DISABLE_COPY_AND_ASSIGN(Layer);
 };  // class Layer
 
@@ -416,11 +434,15 @@ class Layer {
 template <typename Dtype>
 inline Dtype Layer<Dtype>::Forward(const vector<Blob<Dtype>*>& bottom,
     const vector<Blob<Dtype>*>& top) {
+  //Lock();
   Dtype loss = 0;
+  Timer timer;
   Reshape(bottom, top);
   switch (Caffe::mode()) {
   case Caffe::CPU:
+    timer.Start();
     Forward_cpu(bottom, top);
+    timer.Stop();
     for (int top_id = 0; top_id < top.size(); ++top_id) {
       if (!this->loss(top_id)) { continue; }
       const int count = top[top_id]->count();
@@ -430,7 +452,9 @@ inline Dtype Layer<Dtype>::Forward(const vector<Blob<Dtype>*>& bottom,
     }
     break;
   case Caffe::GPU:
+    timer.Start();
     Forward_gpu(bottom, top);
+    timer.Stop();
 #ifndef CPU_ONLY
     for (int top_id = 0; top_id < top.size(); ++top_id) {
       if (!this->loss(top_id)) { continue; }
@@ -446,6 +470,9 @@ inline Dtype Layer<Dtype>::Forward(const vector<Blob<Dtype>*>& bottom,
   default:
     LOG(FATAL) << "Unknown caffe mode.";
   }
+  test_time_ = timer.MicroSeconds();
+  //Unlock();
+  //printf("[cxh] %s: %.2f ms\n", layer_param_.name().c_str(), (test_time_/1000));
   return loss;
 }
 

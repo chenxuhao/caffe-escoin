@@ -179,6 +179,7 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   vector<int> nz_num_;//the number of nonzero for cusparse
   Blob<Dtype> transposed_output_buffer_;
   Dtype *input_padded_;
+  Dtype *d_input_padded_; // GPU pointer
   Dtype *output_scratch_;
   /** weight sparse matrix */
   vector<int *> weight_rowptr_;

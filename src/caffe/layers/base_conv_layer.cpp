@@ -6,17 +6,18 @@
 #include "caffe/util/im2col.hpp"
 #include "caffe/util/math_functions.hpp"
 #include "caffe/util/sconv.hpp" // cxh
-#define BLOCKED_SCONV
-//#define MKL_CSRMM
-//#define USE_CUSPARSE // cxh
-//#define SPARSE_WEIGHT // cxh
+//#define BLOCKED_SCONV
+#define LOWERING // cxh
 namespace caffe {
 // cxh
 template <typename Dtype>
 BaseConvolutionLayer<Dtype>::~BaseConvolutionLayer()
 {
-#ifdef BLOCKED_SCONV
+#ifndef LOWERING
   free(input_padded_);
+  CUDA_CHECK(cudaFree(d_input_padded_));
+#endif
+#ifdef BLOCKED_SCONV
   free(output_scratch_);
   for (int i = 0; i < weight_rowptr_.size(); ++i) {
     free(weight_rowptr_[i]);
@@ -35,33 +36,33 @@ BaseConvolutionLayer<Dtype>::~BaseConvolutionLayer()
 // cxh
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::WeightAlign(){
+	int num_threads = 1;
+	omp_set_num_threads(4);
+#pragma omp parallel
+	{
+		num_threads = omp_get_num_threads();
+	}
+	printf("num_threads = %d\n", num_threads);
 	CHECK_EQ(this->blobs_[0]->num_axes(),4);//caffe now supports any dimension
 	//const LayerParameter& layerparam = this->layer_param();
 	//LOG(INFO)<<"layer\t"<<layerparam.name()<<"\t"<<"has sparsity of "<< this->blobs_[0]->GetSparsity();
 	//this->blobs_[0]->WriteToNistMMIO(layerparam.name()+".weight");
-
-	//ConvolutionParameter conv_param = this->layer_param_.convolution_param();
 	const int M = this->blobs_[0]->shape(0)/group_;
 	const int N = this->blobs_[0]->count(1,4);
 	const int weight_offset = this->blobs_[0]->count()/group_;
 	const int row_offset = this->blobs_[0]->shape(0)/group_ + 1;
-	//int left_cols = 0;
-	//int left_rows = 0;
 	//switch(conv_param.conv_mode()){
 		//case caffe::ConvolutionParameter_ConvMode_LOWERED_CSRMM:
-			//LOG(INFO)<<"ConvolutionParameter_ConvMode_LOWERED_CSRMM";
 			for (int g = 0; g < group_; ++g) {
 				switch (Caffe::mode()) {
 				    case Caffe::CPU: {
-//#ifndef BLOCKED_SCONV
-						// cxh: create a CSR matrix as for LOWERED_CSRMM
+						// cxh: create a CSR matrix
 				    	caffe_cpu_sparse_dense2csr(M, N,
 								this->blobs_[0]->mutable_cpu_data() + weight_offset * g,
 								nz_weight_values_.mutable_cpu_data() + weight_offset * g,
 								nz_weight_indices_.mutable_cpu_data() + weight_offset * g,
 								nz_weight_index_pointers_.mutable_cpu_data() + row_offset * g);
-//#endif
-#ifndef MKL_CSRMM
+#ifndef LOWERING
 						// direct sparse convolution
 						int height = conv_input_shape_.cpu_data()[1];
 						int width = conv_input_shape_.cpu_data()[2];
@@ -70,6 +71,10 @@ void BaseConvolutionLayer<Dtype>::WeightAlign(){
 						int pad_h = pad_.cpu_data()[0];
 						int pad_w = pad_.cpu_data()[1];
 #ifndef BLOCKED_SCONV
+						int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
+						int msg = posix_memalign((void **)&input_padded_, 4096, sizeof(Dtype) * input_padded_len);
+						memset(input_padded_, 0, sizeof(Dtype) * input_padded_len);
+
 						// declare variables for sparsity statistics
 						vector<vector<int> > nnz_per_channel_pair(M);
 						for(int i = 0; i < M; ++i) {
@@ -97,12 +102,6 @@ void BaseConvolutionLayer<Dtype>::WeightAlign(){
 							}
 						}
 #else
-						omp_set_num_threads(1);
-						int num_threads = 1;
-						#pragma omp parallel
-						{
-						num_threads = omp_get_num_threads();
-						}
 						int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w) + VLEN - 1;
 						int msg = posix_memalign((void **)&input_padded_, 4096, sizeof(Dtype) * num_threads * input_padded_len);
 						memset(input_padded_, 4096, sizeof(Dtype) * num_threads * input_padded_len);
@@ -230,14 +229,13 @@ void BaseConvolutionLayer<Dtype>::WeightAlign(){
 							}
 						} // for each group
 						msg = posix_memalign((void **)&output_scratch_, 4096, sizeof(Dtype)*OC_BLOCK*output_h*((output_w + 16 - 1)/16*16)*num_threads);
-						if(msg) printf("ERROR: memalign failed\n");
 #endif // end BLOCKED_SCONV
-#endif // end MKL_CSRMM
+						if(msg) printf("ERROR: memalign failed\n");
+#endif // end LOWERING
 				      break; }
 				    case Caffe::GPU: {
 				#ifndef CPU_ONLY
 						//printf("transform weight matrix from dense to sparse\n");
-						//printf("M=%d, N=%d, weight_offset=%d, row_offset=%d\n", M, N, weight_offset, row_offset);
 				    	int total_nonzero = 0;
 				    	caffe_gpu_sparse_dense2csr(M, N,
 				    			this->blobs_[0]->gpu_data() + weight_offset * g,
@@ -247,6 +245,21 @@ void BaseConvolutionLayer<Dtype>::WeightAlign(){
 							    nz_weight_indices_.mutable_gpu_data()+ weight_offset * g,
 							    &total_nonzero);
 				    	nz_num_[g] = total_nonzero;
+					#ifndef LOWERING
+						int height = conv_input_shape_.cpu_data()[1];
+						int width = conv_input_shape_.cpu_data()[2];
+						int pad_h = pad_.cpu_data()[0];
+						int pad_w = pad_.cpu_data()[1];
+						int kernel_h = kernel_shape_.cpu_data()[0];
+						int kernel_w = kernel_shape_.cpu_data()[1];
+						int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
+						CUDA_CHECK(cudaMalloc((void **)&d_input_padded_, sizeof(Dtype) * input_padded_len));
+						CUDA_CHECK(cudaMemset(d_input_padded_, 0, input_padded_len * sizeof(Dtype)));
+						// transform the indices for direct sparse convolution
+						const int *rowptr = nz_weight_index_pointers_.gpu_data() + row_offset * g;
+						int *colidx = nz_weight_indices_.mutable_gpu_data() + weight_offset * g;
+						caffe_gpu_stretch(rowptr, colidx, M, height, width, pad_h, pad_w, kernel_h, kernel_w);
+					#endif
 				#else
 				      printf("WARNNING: CPU_ONLY mode is selected\n");
 				#endif
@@ -517,7 +530,8 @@ void BaseConvolutionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 		const Dtype* weights, Dtype* output, bool skip_im2col) {
-	int tid = 0;//omp_get_thread_num();
+	//omp_set_num_threads(4);
+	//int tid = omp_get_thread_num();
 	const Dtype* col_buff = input;
 	if (!is_1x1_) {
 		if (!skip_im2col) {
@@ -533,10 +547,10 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 		const int *row_offsets = nz_weight_index_pointers_.cpu_data() + row_offset * g;
 		int nnz = row_offsets[M];
 		Dtype sparsity = (Dtype)1.0 - (Dtype)nnz/ (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
-		if(sparsity > (Dtype)0.6) {
-		//if(0) {
+		//if(sparsity > (Dtype)0.6) {
+		if(0) {
 			// cxh: only do this when sparsity > 60%
-#ifdef MKL_CSRMM
+#ifdef LOWERING
 			const int N = conv_out_spatial_dim_;
 			const int K = kernel_dim_;
 			//printf("MKL sparse weight matrix multi. dense feature map matrix\n");
@@ -564,24 +578,31 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 			//const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
 			//const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
 			//assert(output_h*output_w == N);
-
+			Timer timer;
+			timer.Start();
 			Dtype *input_padded;
 			int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
-			input_padded = new Dtype[input_padded_len];
-			assert(input_padded);
-			for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
-				memset(input_padded + in_channel * (height + pad_h) * (width + pad_w),
-						0, sizeof(Dtype) * pad_h * (width + pad_w));
-				for (int input_row = 0; input_row < height; ++input_row) {
-					memset(input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w),
-							0, sizeof(Dtype) * pad_w);
-					memcpy(input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
-							input + (in_channel * height + input_row) * width, sizeof(Dtype) * width);
+			if(pad_h == 0 && pad_w == 0)
+			//if (0)
+				input_padded = (Dtype *)input;
+			else {
+				input_padded = input_padded_;
+				//input_padded = new Dtype[input_padded_len];
+				for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
+				//	memset(input_padded + in_channel * (height + pad_h) * (width + pad_w),
+				//			0, sizeof(Dtype) * pad_h * (width + pad_w));
+					for (int input_row = 0; input_row < height; ++input_row) {
+				//		memset(input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w),
+				//				0, sizeof(Dtype) * pad_w);
+						memcpy(input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
+								input + (in_channel * height + input_row) * width, sizeof(Dtype) * width);
+					}
 				}
+				//memset(input_padded + conv_in_channels_ * (height + pad_h) * (width + pad_w),
+				//		0,sizeof(Dtype) * pad_h * (width + 2 * pad_w));
 			}
-			memset(input_padded + conv_in_channels_ * (height + pad_h) * (width + pad_w),
-					0,sizeof(Dtype) * pad_h * (width + 2 * pad_w));
-
+			timer.Stop();
+			//printf("[cxh] %s memcpy time: %.2f ms\n", this->layer_param().name().c_str(), timer.MicroSeconds()/1000);
 			const Dtype *in_temp = input_padded + conv_in_channels_/group_ * g * (height + pad_h) * (width + pad_w);
 #ifdef BLOCKED_SCONV
 			const int output_h = this->output_shape_[0];
@@ -622,6 +643,7 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 					group_, conv_out_spatial_dim_, kernel_dim_,
 					(Dtype)1., weights + weight_offset_ * g, col_buff + col_offset_ * g,
 					(Dtype)0., output + output_offset_ * g);
+	//omp_set_num_threads(1);
 		}
 	}
 	timer.Stop();
@@ -684,27 +706,59 @@ template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 		const Dtype* weights, Dtype* output, bool skip_im2col) {
 	const Dtype* col_buff = input;
+#ifdef LOWERING
 	if (!is_1x1_) {
 		if (!skip_im2col) {
 			conv_im2col_gpu(input, col_buffer_.mutable_gpu_data());
 		}
 		col_buff = col_buffer_.gpu_data();
 	}
+#else
+	// cxh: direct sparse convolution
+	int height = conv_input_shape_.cpu_data()[1];
+	int width = conv_input_shape_.cpu_data()[2];
+	int kernel_h = kernel_shape_.cpu_data()[0];
+	int kernel_w = kernel_shape_.cpu_data()[1];
+	int pad_h = pad_.cpu_data()[0];
+	int pad_w = pad_.cpu_data()[1];
+	int stride_h = stride_.cpu_data()[0];
+	int stride_w = stride_.cpu_data()[1];
+	int dilation_h = dilation_.cpu_data()[0];
+	int dilation_w = dilation_.cpu_data()[1];
+
+	Dtype *d_input_padded;
+	int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
+	//CUDA_CHECK(cudaMalloc((void **)&d_input_padded, sizeof(Dtype) * input_padded_len));
+	//CUDA_CHECK(cudaMemset(d_input_padded, 0, input_padded_len * sizeof(Dtype)));
+	d_input_padded = d_input_padded_;
+	for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
+		//CUDA_CHECK(cudaMemset(d_input_padded + in_channel * (height + pad_h) * (width + pad_w),
+		//		0, sizeof(Dtype) * pad_h * (width + pad_w)) );
+		for (int input_row = 0; input_row < height; ++input_row) {
+			//	CUDA_CHECK(cudaMemset(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w),
+			//			0, sizeof(Dtype) * pad_w));
+			CUDA_CHECK(cudaMemcpy(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
+					input + (in_channel * height + input_row) * width, sizeof(Dtype) * width, cudaMemcpyDeviceToDevice));
+		}
+	}
+	//CUDA_CHECK(cudaMemset(d_input_padded + conv_in_channels_ * (height + pad_h) * (width + pad_w),
+	//		0, sizeof(Dtype) * pad_h * (width + 2 * pad_w)));
+#endif
 	for (int g = 0; g < group_; ++g) {
 		// cxh
 		Dtype sparsity = (Dtype)1.0 - (Dtype)nz_num_[g] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
 		//LOG(INFO)<<"Sparsity of "<< Layer<Dtype>::layer_param().name() << ": "<< sparsity;
-		if(sparsity < (Dtype)0.6) {
-		//if(0) {
+		//if(sparsity < (Dtype)0.6) {
+		if(0) {
 			//printf("dense weight matrix multi. dense feature map matrix\n");
 			caffe_gpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
 					group_, conv_out_spatial_dim_, kernel_dim_,
 					(Dtype)1., weights + weight_offset_ * g, col_buff + col_offset_ * g,
 					(Dtype)0., output + output_offset_ * g);
 		} else {
-			// cxh: only do this when sparsity > 90%
+			// cxh: only do this when sparsity > 60%
 			//printf("sparse weight matrix multi. dense feature map matrix, sparsity=%f\n", sparsity);
-#ifdef USE_CUSPARSE
+#ifdef LOWERING
 			caffe_gpu_sparse_csrmm(conv_out_channels_ /group_,
 					conv_out_spatial_dim_, kernel_dim_, 
 					nz_num_[g], (Dtype)1., 
@@ -715,34 +769,6 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 					output + output_offset_ * g,
 					transposed_output_buffer_.mutable_gpu_data());
 #else
-			// cxh: direct sparse convolution
-			int height = conv_input_shape_.cpu_data()[1];
-			int width = conv_input_shape_.cpu_data()[2];
-			//int kernel_h = kernel_shape_.cpu_data()[0];
-			//int kernel_w = kernel_shape_.cpu_data()[1];
-			int pad_h = pad_.cpu_data()[0];
-			int pad_w = pad_.cpu_data()[1];
-			//int stride_h = stride_.cpu_data()[0];
-			//int stride_w = stride_.cpu_data()[1];
-			//int dilation_h = dilation_.cpu_data()[0];
-			//int dilation_w = dilation_.cpu_data()[1];
-
-			Dtype *d_input_padded;
-			int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
-			cudaMalloc((void **)&d_input_padded, sizeof(Dtype) * input_padded_len);
-			for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
-				cudaMemset(d_input_padded + in_channel * (height + pad_h) * (width + pad_w),
-						0, sizeof(Dtype) * pad_h * (width + pad_w));
-				for (int input_row = 0; input_row < height; ++input_row) {
-					cudaMemset(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w),
-							0, sizeof(Dtype) * pad_w);
-					cudaMemcpy(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
-							input + (in_channel * height + input_row) * width, sizeof(Dtype) * width, cudaMemcpyDeviceToDevice);
-				}
-			}
-			cudaMemset(d_input_padded + conv_in_channels_ * (height + pad_h) * (width + pad_w),
-					0, sizeof(Dtype) * pad_h * (width + 2 * pad_w));
-/*
 			const Dtype *in_temp = d_input_padded + conv_in_channels_/group_ * g * (height + pad_h) * (width + pad_w);
 			const int row_offset = conv_out_channels_ /group_ + 1;
 			const int M = conv_out_channels_ / group_;
@@ -753,16 +779,6 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 					height, width, pad_h, pad_w, stride_h, stride_w, 
 					dilation_h, dilation_w, kernel_h, kernel_w,
 					output + output_offset_ * g, M);
-*/
-			caffe_gpu_sparse_csrmm(conv_out_channels_ /group_,
-					conv_out_spatial_dim_, kernel_dim_, 
-					nz_num_[g], (Dtype)1., 
-					nz_weight_values_.gpu_data()+ weight_offset_ * g,
-					nz_weight_index_pointers_.gpu_data() + (conv_out_channels_ / group_ + 1) * g,
-					nz_weight_indices_.gpu_data()+ weight_offset_ * g,
-					col_buff + col_offset_ * g, (Dtype)0., 
-					output + output_offset_ * g,
-					transposed_output_buffer_.mutable_gpu_data());
 #endif
 		}
 	}

@@ -12,5 +12,5 @@ ERR=../logs/$SCHEME-more.log
 #MODE="-gpu 0"
 export GLOG_minloglevel=2
 echo ">>>Start run $SCHEME at `date`" > $OUT 
-./build/tools/caffe.bin test -model $PROTO -weights $WEIGHTS $MODE 1>> $OUT 2> $ERR
+./build/tools/caffe.bin test -model $PROTO -weights $WEIGHTS $MODE
 echo ">>> End run $SCHEME at `date`" >> $OUT 
