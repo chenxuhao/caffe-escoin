@@ -41,9 +41,19 @@ void caffe_cpu_sconv(const Dtype *input_padded, int in_channels,
 		int height, int width, int pad_h, int pad_w,
 		int stride_h, int stride_w, int dilation_h, int dilation_w,
 		const int *rowptr, const int *colidx, const Dtype *values,
-		int kernel_h, int kernel_w,
-		const Dtype *bias, Dtype *output, int out_channels,
-		int input_padded_len);
+		int kernel_h, int kernel_w, const Dtype *bias, 
+		Dtype *output, int out_channels, int input_padded_len);
+
+// cxh: blocked direct sparse convolution
+template <typename Dtype, bool FUSE_RELU>
+void caffe_cpu_blocked_sconv(const Dtype *input_padded, int in_channels,
+		int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		const int *rowptr, const int *colidx, const Dtype *values,
+		int kernel_h, int kernel_w, const int **rowptr_blocked, 
+		const int **colidx_blocked, const Dtype **values_blocked,
+		int ncolblocks, const Dtype *bias, Dtype *output, 
+		int out_channels, Dtype *output_scratch, int ninputs);
 
 template <typename Dtype>
 void caffe_cpu_gemv(const CBLAS_TRANSPOSE TransA, const int M, const int N,

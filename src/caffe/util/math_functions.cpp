@@ -6,6 +6,8 @@
 #include "caffe/common.hpp"
 #include "caffe/util/math_functions.hpp"
 #include "caffe/util/rng.hpp"
+#include "caffe/util/sconv.hpp" // cxh
+#include "caffe/util/cpu_info.hpp" // cxh
 
 namespace caffe {
 
@@ -138,7 +140,6 @@ void caffe_cpu_sconv(const Dtype *input_padded, int in_channels,
 	int begin = 0;
 	int end = out_channels;
 	if (dilation_h != 1 || dilation_w != 1) {
-//#pragma omp parallel for collapse(2)
 		for (int output_row = 0; output_row < output_h; ++output_row) {
 			for (int output_col = 0; output_col < output_w; ++output_col) {
 				for (int out_channel = begin; out_channel < end; ++out_channel) {
@@ -194,36 +195,317 @@ template void caffe_cpu_sconv<double>(const double *input_padded, int in_channel
 		int height, int width, int pad_h, int pad_w,
 		int stride_h, int stride_w, int dilation_h, int dilation_w,
 		const int *rowptr, const int *colidx, const double *values,
-		int kernel_h, int kernel_w,
-		const double *bias, double *output, int out_channels,
-		int input_padded_len);
+		int kernel_h, int kernel_w, const double *bias, 
+		double *output, int out_channels, int input_padded_len);
 
-template <typename Dtype>
+template <typename Dtype, bool FUSE_RELU>
 void caffe_cpu_blocked_sconv(const Dtype *input_padded, int in_channels,
 		int height, int width, int pad_h, int pad_w,
 		int stride_h, int stride_w, int dilation_h, int dilation_w,
 		const int *rowptr, const int *colidx, const Dtype *values,
 		int kernel_h, int kernel_w, const int **rowptr_blocked, 
 		const int **colidx_blocked, const Dtype **values_blocked,
-		int ncolblocks,
-		const Dtype *bias, Dtype *output, int out_channels,
-		Dtype *output_scratch, 
-		int input_padded_len) 
+		int ncolblocks, const Dtype *bias, Dtype *output, 
+		int out_channels, Dtype *output_scratch, int ninputs) 
 {
 	//const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
 	//const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
 	if (dilation_h != 1 || dilation_w != 1) {
-		caffe_cpu_sconv<Dtype>(input_padded, in_channels, height, width, 
+		caffe_cpu_sconv_default<FUSE_RELU>(input_padded, in_channels, height, width, 
 				pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
 				rowptr, colidx, values, kernel_h, kernel_w, bias,
-				output, out_channels, input_padded_len);
+				output, out_channels);
+	} else if (stride_h == 1 && stride_w == 1 && height == width && kernel_h == kernel_w && pad_h == pad_w) {
+		int num_oc_blocks = (out_channels + OC_BLOCK - 1)/OC_BLOCK;
+		int oc_block_begin, oc_block_end;
+		cpu::OpenMpManager::getSimpleGroupedThreadPartition(
+				&oc_block_begin, &oc_block_end, num_oc_blocks, ninputs);
+		int oc_begin = std::min(oc_block_begin*OC_BLOCK, out_channels);
+		int oc_end = std::min(oc_block_end*OC_BLOCK, out_channels);
+		if (kernel_h == 2*pad_h + 1) { // matched padding
+			if (kernel_h == 1) {
+				// the following sizes are used by GoogLeNet
+				if (height == 4) {
+					sconv_unit_stride<4, 1, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				else if (height == 7) {
+					sconv_unit_stride<7, 1, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				else if (height == 14) {
+					sconv_unit_stride<14, 1, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				else if (height == 28) {
+					sconv_unit_stride<28, 1, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				else if (height == 56) {
+					sconv_unit_stride<56, 1, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+			}
+			else if (kernel_h == 3) {
+				if (height == 12) {
+					// overfeat
+					sconv_unit_stride<12, 3, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				else if (height == 13) {
+					// alexnet conv3-5
+					sconv_unit_stride<13, 3, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				// the following sizes are used by GoogLeNet
+				else if (height == 7) {
+					sconv_unit_stride<7, 3, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				else if (height == 14) {
+					sconv_unit_stride<14, 3, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				else if (height == 28) {
+					sconv_unit_stride<28, 3, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				else if (height == 56) {
+					sconv_unit_stride<56, 3, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				// OCR public
+				else if (height == 3) {
+					sconv_unit_stride<3, 3, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+			}
+			else if (kernel_h == 5) {
+				// AlexNet conv2
+				if (height == 27) {
+					sconv_unit_stride<27, 5, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				// the following sizes are used by GoogLeNet
+				else if (height == 7) {
+					sconv_unit_stride<7, 5, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				else if (height == 14) {
+					sconv_unit_stride<14, 5, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+				else if (height == 28) {
+					sconv_unit_stride<28, 5, FUSE_RELU>(
+							input_padded,
+							rowptr_blocked, colidx_blocked, values_blocked, ncolblocks,
+							bias,
+							output, oc_begin, oc_end, output_scratch,
+							in_channels, out_channels);
+					return;
+				}
+			}
+		}
+		else if (0 == pad_h) { // zero padding
+		}
+	} else if (height == 227 && width == 227 && pad_h == 0 && pad_w == 0 && stride_h == 4 && stride_w == 4 && kernel_w == 11 && kernel_h == 11) {
+		// conv1 of AlexNet
+		assert(!FUSE_RELU);
+		int WIDTH = 227;
+		int STRIDE = 4;
+		int K = 11;
+		int WOUT = (WIDTH - K)/STRIDE + 1; // 55
+		const int JBLOCK = 128;
+		const int HBLOCK = 8;
+		const int WBLOCK = 9;
+		//__declspec(aligned(64)) float sum[WOUT*WOUT];
+		__attribute__ ((aligned(64))) float sum[WOUT*WOUT];
+		for (int out_channel = 0; out_channel < out_channels; ++out_channel) {
+			int jbegin = rowptr[out_channel];
+			int jend = std::min(jbegin + JBLOCK, rowptr[out_channel + 1]);
+			for (int hbegin = 0; hbegin < WOUT; hbegin += HBLOCK) {
+				int hend = std::min(hbegin + HBLOCK, WOUT);
+				for (int wbegin = 0; wbegin < WOUT; wbegin += WBLOCK) {
+					int wend = std::min(wbegin + WBLOCK, WOUT);
+					for (int k = 0; k < (hend - hbegin) * (wend - wbegin); ++k) {
+						sum[k] = 0;
+					}
+					for (int j = jbegin; j < jend; ++j) {
+						float c = values[j];
+						int off = colidx[j];
+						int k = 0;
+						for (int h = hbegin; h < hend; ++h) {
+							for (int w = wbegin; w < wend; ++w, ++k) {
+								sum[k] += c*input_padded[off + (h*WIDTH + w)*STRIDE];
+							}
+						}
+					}
+					int k = 0;
+					for (int h = hbegin; h < hend; ++h) {
+						for (int w = wbegin; w < wend; ++w, ++k) {
+							output[(out_channel*WOUT + h)*WOUT + w] = sum[k];
+						}
+					}
+				}
+			}
+			jbegin += JBLOCK;
+			for ( ; jbegin < rowptr[out_channel + 1]; jbegin += JBLOCK) {
+				int jend = std::min(jbegin + JBLOCK, rowptr[out_channel + 1]);
+				for (int hbegin = 0; hbegin < WOUT; hbegin += HBLOCK) {
+					int hend = std::min(hbegin + HBLOCK, WOUT);
+					for (int wbegin = 0; wbegin < WOUT; wbegin += WBLOCK) {
+						int wend = std::min(wbegin + WBLOCK, WOUT);
+						for (int k = 0; k < (hend - hbegin) * (wend - wbegin); ++k) {
+							sum[k] = 0;
+						}
+						for (int j = jbegin; j < jend; ++j) {
+							float c = values[j];
+							int off = colidx[j];
+							int k = 0;
+							for (int h = hbegin; h < hend; ++h) {
+								for (int w = wbegin; w < wend; ++w, ++k) {
+									sum[k] += c*input_padded[off + (h*WIDTH + w)*STRIDE];
+								}
+							}
+						}
+						int k = 0;
+						for (int h = hbegin; h < hend; ++h) {
+							for (int w = wbegin; w < wend; ++w, ++k) {
+								output[(out_channel*WOUT + h)*WOUT + w] += sum[k];
+							}
+						}
+					}
+				}
+			}
+		}
+//*/
 	} else {
-		caffe_cpu_sconv<Dtype>(input_padded, in_channels, height, width, 
+		caffe_cpu_sconv_default<FUSE_RELU>(input_padded, in_channels, height, width, 
 				pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
 				rowptr, colidx, values, kernel_h, kernel_w, bias,
-				output, out_channels, input_padded_len);
+				output, out_channels);
 	}
 }
+
+template 
+void caffe_cpu_blocked_sconv<float,true>(const float *input_padded, 
+		int in_channels, int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		const int *rowptr, const int *colidx, const float *values,
+		int kernel_h, int kernel_w, const int **rowptr_blocked, 
+		const int **colidx_blocked, const float **values_blocked,
+		int ncolblocks, const float *bias, float *output, 
+		int out_channels, float *output_scratch, int input_padded_len);
+
+template 
+void caffe_cpu_blocked_sconv<float,false>(const float *input_padded, 
+		int in_channels, int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		const int *rowptr, const int *colidx, const float *values,
+		int kernel_h, int kernel_w, const int **rowptr_blocked, 
+		const int **colidx_blocked, const float **values_blocked,
+		int ncolblocks, const float *bias, float *output, 
+		int out_channels, float *output_scratch, int input_padded_len);
+
+template <>
+void caffe_cpu_blocked_sconv<double,true>(const double *input_padded, 
+		int in_channels, int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		const int *rowptr, const int *colidx, const double *values,
+		int kernel_h, int kernel_w, const int **rowptr_blocked, 
+		const int **colidx_blocked, const double **values_blocked,
+		int ncolblocks, const double *bias, double *output, 
+		int out_channels, double *output_scratch, int input_padded_len) {
+	NOT_IMPLEMENTED;
+}
+
+template <>
+void caffe_cpu_blocked_sconv<double,false>(const double *input_padded, 
+		int in_channels, int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int dilation_h, int dilation_w,
+		const int *rowptr, const int *colidx, const double *values,
+		int kernel_h, int kernel_w, const int **rowptr_blocked, 
+		const int **colidx_blocked, const double **values_blocked,
+		int ncolblocks, const double *bias, double *output, 
+		int out_channels, double *output_scratch, int input_padded_len) {
+	NOT_IMPLEMENTED;
+}
+
 // end cxh
 
 template <>
