@@ -70,7 +70,6 @@ static /*inline*/ void __attribute__((noinline)) sconv_unit_stride(
     float *scratch,
     int in_channels, int out_channels) // scratch: 832B per OC_BLOCK
 {
-  //int PAD = (K - 1)/2;
   //unsigned long long t = __rdtsc();
 
   assert(PAD <= (K - 1)/2);

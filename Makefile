@@ -178,7 +178,7 @@ ifneq ($(CPU_ONLY), 1)
 	LIBRARIES := cudart cublas curand cusparse
 endif
 
-LIBRARIES += glog gflags protobuf boost_system boost_filesystem m hdf5_hl hdf5
+LIBRARIES += glog gflags protobuf boost_system boost_filesystem m hdf5_hl hdf5 spmp
 
 # handle IO dependencies
 USE_LEVELDB ?= 1
@@ -309,6 +309,8 @@ ifneq (,$(findstring clang++,$(CXX)))
 	STATIC_LINK_COMMAND := -Wl,-force_load $(STATIC_NAME)
 else ifneq (,$(findstring g++,$(CXX)))
 	STATIC_LINK_COMMAND := -Wl,--whole-archive $(STATIC_NAME) -Wl,--no-whole-archive
+else ifneq (,$(findstring icpc,$(CXX)))
+	STATIC_LINK_COMMAND := -static
 else
   # The following line must not be indented with a tab, since we are not inside a target
   $(error Cannot static link with the $(CXX) compiler)
@@ -410,9 +412,30 @@ LIBRARY_DIRS += $(LIB_BUILD_DIR)
 CXXFLAGS += -MMD -MP
 
 # cxh
-CXXFLAGS += -fopenmp
-LINKFLAGS += -fopenmp
-CXXFLAGS += -mavx2 -mfma -std=c++11
+CXXFLAGS += -std=c++11 -D__AVX2__
+ifneq (,$(findstring icpc,$(CXX)))
+	CXXFLAGS += -qopenmp -march=core-avx2 -DUSE_ICC
+	LINKFLAGS += -qopenmp
+else ifneq (,$(findstring g++,$(CXX)))
+	CXXFLAGS += -fopenmp -mavx2 -mfma
+	LINKFLAGS += -fopenmp
+else
+  $(error Do not support OpenMP with the $(CXX) compiler)
+endif
+
+ifeq ($(AVX), 3)
+  ifeq ($(MIC), 1)
+    CXXFLAGS += -xMIC-AVX512
+  else
+    CXXFLAGS += -xCORE-AVX512
+  endif
+else
+  ifeq ($(AVX), 2)
+    CXXFLAGS += -xCORE-AVX2 -march=core-avx2
+  #else
+  #  CXXFLAGS += -xHost
+  endif
+endif
 
 # Complete build flags.
 COMMON_FLAGS += $(foreach includedir,$(INCLUDE_DIRS),-I$(includedir))
@@ -458,6 +481,9 @@ endif
 	superclean supercleanlist supercleanfiles warn everything
 
 all: lib tools examples
+
+SpMP:
+	$(MAKE) -C src/SpMP CC=$(CXX) DEBUG=$(DEBUG)
 
 lib: $(STATIC_NAME) $(DYNAMIC_NAME)
 
@@ -573,12 +599,12 @@ $(BUILD_DIR)/.linked:
 $(ALL_BUILD_DIRS): | $(BUILD_DIR_LINK)
 	@ mkdir -p $@
 
-$(DYNAMIC_NAME): $(OBJS) | $(LIB_BUILD_DIR)
+$(DYNAMIC_NAME): $(OBJS) SpMP | $(LIB_BUILD_DIR)
 	@ echo LD -o $@
 	$(Q)$(CXX) -shared -o $@ $(OBJS) $(VERSIONFLAGS) $(LINKFLAGS) $(LDFLAGS)
 	@ cd $(BUILD_DIR)/lib; rm -f $(DYNAMIC_NAME_SHORT);   ln -s $(DYNAMIC_VERSIONED_NAME_SHORT) $(DYNAMIC_NAME_SHORT)
 
-$(STATIC_NAME): $(OBJS) | $(LIB_BUILD_DIR)
+$(STATIC_NAME): $(OBJS) SpMP | $(LIB_BUILD_DIR)
 	@ echo AR -o $@
 	$(Q)ar rcs $@ $(OBJS)
 
@@ -658,6 +684,7 @@ clean:
 	@- $(RM) -rf $(DISTRIBUTE_DIR)
 	@- $(RM) $(PY$(PROJECT)_SO)
 	@- $(RM) $(MAT$(PROJECT)_SO)
+	$(MAKE) -C src/SpMP clean
 
 supercleanfiles:
 	$(eval SUPERCLEAN_FILES := $(strip \
