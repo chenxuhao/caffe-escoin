@@ -218,8 +218,8 @@ void caffe_cpu_blocked_sconv(const Dtype *input_padded, int in_channels,
 	} else if (stride_h == 1 && stride_w == 1 && height == width && kernel_h == kernel_w && pad_h == pad_w) {
 		int num_oc_blocks = (out_channels + OC_BLOCK - 1)/OC_BLOCK;
 		int oc_block_begin, oc_block_end;
-		cpu::OpenMpManager::getSimpleGroupedThreadPartition(
-				&oc_block_begin, &oc_block_end, num_oc_blocks, ninputs);
+		//cpu::OpenMpManager::getSimpleGroupedThreadPartition(
+		//		&oc_block_begin, &oc_block_end, num_oc_blocks, ninputs);
 		int oc_begin = std::min(oc_block_begin*OC_BLOCK, out_channels);
 		int oc_end = std::min(oc_block_end*OC_BLOCK, out_channels);
 		if (kernel_h == 2*pad_h + 1) { // matched padding

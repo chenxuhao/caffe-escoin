@@ -412,6 +412,7 @@ CXXFLAGS += -MMD -MP
 # cxh
 CXXFLAGS += -fopenmp
 LINKFLAGS += -fopenmp
+CXXFLAGS += -mavx2 -mfma -std=c++11
 
 # Complete build flags.
 COMMON_FLAGS += $(foreach includedir,$(INCLUDE_DIRS),-I$(includedir))
