@@ -8,8 +8,8 @@
 #include "caffe/util/sconv.hpp" // cxh
 #ifdef USE_ICC
 #include "caffe/util/cpu_info.hpp" // cxh
+#define BLOCKED_SCONV // cxh: only work with ICC
 #endif
-#define BLOCKED_SCONV
 //#define LOWERING // cxh
 namespace caffe {
 // cxh

@@ -32,7 +32,9 @@ void ConvolutionLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
 	if (this->bias_term_) {
 		bias = this->blobs_[1]->cpu_data();
 	}//*/
+#ifdef USE_ICC
 	mkl_set_num_threads(1);
+#endif
 	for (int i = 0; i < bottom.size(); ++i) {
 		const Dtype* bottom_data = bottom[i]->cpu_data();
 		Dtype* top_data = top[i]->mutable_cpu_data();
