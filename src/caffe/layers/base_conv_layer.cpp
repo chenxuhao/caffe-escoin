@@ -6,7 +6,10 @@
 #include "caffe/util/im2col.hpp"
 #include "caffe/util/math_functions.hpp"
 #include "caffe/util/sconv.hpp" // cxh
-//#define BLOCKED_SCONV
+#ifdef USE_ICC
+#include "caffe/util/cpu_info.hpp" // cxh
+#endif
+#define BLOCKED_SCONV
 //#define LOWERING // cxh
 namespace caffe {
 // cxh
@@ -14,8 +17,16 @@ template <typename Dtype>
 BaseConvolutionLayer<Dtype>::~BaseConvolutionLayer()
 {
 #ifndef LOWERING
-  free(input_padded_);
-  CUDA_CHECK(cudaFree(d_input_padded_));
+  switch (Caffe::mode()) {
+    case Caffe::CPU: {
+      free(input_padded_);
+      break; }
+    case Caffe::GPU: {
+#ifndef CPU_ONLY
+      CUDA_CHECK(cudaFree(d_input_padded_));
+#endif
+      break; }
+  }
 #endif
 #ifdef BLOCKED_SCONV
   free(output_scratch_);
@@ -35,22 +46,39 @@ BaseConvolutionLayer<Dtype>::~BaseConvolutionLayer()
 
 // cxh
 template <typename Dtype>
-void BaseConvolutionLayer<Dtype>::WeightAlign(){
-/*	int num_threads = 1;
-	omp_set_num_threads(4);
+void BaseConvolutionLayer<Dtype>::WeightAlign() {
+#ifdef BLOCKED_SCONV
+	cpu::OpenMpManager::getThreadGroupBarriers(this->num_);
+	int num_threads = 1;
+	//omp_set_num_threads(4);
 #pragma omp parallel
 	{
 		num_threads = omp_get_num_threads();
 	}
-	printf("num_threads = %d\n", num_threads);*/
+	//printf("num_threads = %d\n", num_threads);
+#endif
 	CHECK_EQ(this->blobs_[0]->num_axes(),4);//caffe now supports any dimension
 	//const LayerParameter& layerparam = this->layer_param();
 	//LOG(INFO)<<"layer\t"<<layerparam.name()<<"\t"<<"has sparsity of "<< this->blobs_[0]->GetSparsity();
-	//this->blobs_[0]->WriteToNistMMIO(layerparam.name()+".weight");
 	const int M = this->blobs_[0]->shape(0)/group_;
 	const int N = this->blobs_[0]->count(1,4);
 	const int weight_offset = this->blobs_[0]->count()/group_;
 	const int row_offset = this->blobs_[0]->shape(0)/group_ + 1;
+#ifndef LOWERING
+	int height = conv_input_shape_.cpu_data()[1];
+	int width = conv_input_shape_.cpu_data()[2];
+	int pad_h = pad_.cpu_data()[0];
+	int pad_w = pad_.cpu_data()[1];
+	int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
+	#ifdef BLOCKED_SCONV
+	input_padded_len += (VLEN - 1);
+	int msg = posix_memalign((void **)&input_padded_, 4096, sizeof(Dtype) * num_threads * input_padded_len);
+	memset(input_padded_, 0, sizeof(Dtype) * num_threads * input_padded_len);
+	#else
+	int msg = posix_memalign((void **)&input_padded_, 4096, sizeof(Dtype) * input_padded_len);
+	memset(input_padded_, 0, sizeof(Dtype) * input_padded_len);
+	#endif
+#endif
 	//switch(conv_param.conv_mode()){
 		//case caffe::ConvolutionParameter_ConvMode_LOWERED_CSRMM:
 			for (int g = 0; g < group_; ++g) {
@@ -64,24 +92,9 @@ void BaseConvolutionLayer<Dtype>::WeightAlign(){
 								nz_weight_index_pointers_.mutable_cpu_data() + row_offset * g);
 #ifndef LOWERING
 						// direct sparse convolution
-						int height = conv_input_shape_.cpu_data()[1];
-						int width = conv_input_shape_.cpu_data()[2];
 						int kernel_h = kernel_shape_.cpu_data()[0];
 						int kernel_w = kernel_shape_.cpu_data()[1];
-						int pad_h = pad_.cpu_data()[0];
-						int pad_w = pad_.cpu_data()[1];
 #ifndef BLOCKED_SCONV
-						int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
-						int msg = posix_memalign((void **)&input_padded_, 4096, sizeof(Dtype) * input_padded_len);
-						memset(input_padded_, 0, sizeof(Dtype) * input_padded_len);
-
-						// declare variables for sparsity statistics
-						vector<vector<int> > nnz_per_channel_pair(M);
-						for(int i = 0; i < M; ++i) {
-							nnz_per_channel_pair[i] = vector<int>(conv_in_channels_, 0);
-						}
-						int num_of_non_zero_kernels = 0;
-
 						// transform the indices for direct convolution
 						const int *rowptr = nz_weight_index_pointers_.cpu_data() + row_offset * g;
 						int *colidx = nz_weight_indices_.mutable_cpu_data() + weight_offset * g;
@@ -93,19 +106,9 @@ void BaseConvolutionLayer<Dtype>::WeightAlign(){
 								int in_channel = col/(kernel_w*kernel_h);
 								assert(in_channel < conv_in_channels_);
 								colidx[j] = (in_channel*(height + pad_h) + kernel_row)*(width + pad_w) + kernel_col;
-								nnz_per_channel_pair[out_channel][in_channel]++;
-							}
-							for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
-								if (nnz_per_channel_pair[out_channel][in_channel] != 0) {
-									++num_of_non_zero_kernels;
-								}
 							}
 						}
 #else
-						int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w) + VLEN - 1;
-						int msg = posix_memalign((void **)&input_padded_, 4096, sizeof(Dtype) * num_threads * input_padded_len);
-						memset(input_padded_, 4096, sizeof(Dtype) * num_threads * input_padded_len);
-
 						int temp_nnz = 0;
 						for (int g = 0; g < group_; ++g) {
 							for (int i = 0; i < M*N; ++i) {
@@ -529,8 +532,7 @@ void BaseConvolutionLayer<Dtype>::Reshape(const vector<Blob<Dtype>*>& bottom,
 
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
-		const Dtype* weights, Dtype* output, bool skip_im2col) {
-	//int tid = omp_get_thread_num();
+		const Dtype* weights, Dtype* output, int batch_id, bool skip_im2col) {
 	const Dtype* col_buff = input;
 #ifdef LOWERING
 	if (!is_1x1_) {
@@ -553,37 +555,44 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 	int dilation_w = dilation_.cpu_data()[1];
 	//const int output_h = this->output_shape_[0];
 	//const int output_w = this->output_shape_[1];
-	//const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
-	//const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
-	//assert(output_h*output_w == N);
 	Dtype *input_padded;
 	int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
+#ifdef BLOCKED_SCONV
+	int tid = omp_get_thread_num();
+	input_padded_len += (VLEN - 1);
+#endif
 	if(pad_h == 0 && pad_w == 0)
-		//if (0)
 		input_padded = (Dtype *)input;
 	else {
+		int cbegin, cend;
+#ifdef BLOCKED_SCONV
+		int gid = cpu::OpenMpManager::getThreadGroupNum(num_);
+		input_padded = input_padded_ + input_padded_len * gid;
+		cpu::OpenMpManager::getSimpleGroupedThreadPartition(
+			&cbegin, &cend, conv_in_channels_, num_);
+		//printf("tid=%d, gid=%d, bid=%d, cbegin=%d, cend=%d, num_=%d, conv_in_channels_=%d\n", 
+		//		tid, gid, batch_id, cbegin, cend, num_, conv_in_channels_);
+#else
+		cbegin = 0; cend = conv_in_channels_;
 		input_padded = input_padded_;
-		//input_padded = new Dtype[input_padded_len];
-		for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
-			//	memset(input_padded + in_channel * (height + pad_h) * (width + pad_w),
-			//			0, sizeof(Dtype) * pad_h * (width + pad_w));
+#endif
+		for (int in_channel = cbegin; in_channel < cend; ++in_channel) {
 			for (int input_row = 0; input_row < height; ++input_row) {
-				//		memset(input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w),
-				//				0, sizeof(Dtype) * pad_w);
 				memcpy(input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
 						input + (in_channel * height + input_row) * width, sizeof(Dtype) * width);
 			}
 		}
-		//memset(input_padded + conv_in_channels_ * (height + pad_h) * (width + pad_w),
-		//		0,sizeof(Dtype) * pad_h * (width + 2 * pad_w));
-	}
+#ifdef BLOCKED_SCONV
+		cpu::OpenMpManager::barrierGroup(num_);
 #endif
+	}
+#endif // end LOWERING
 	for (int g = 0; g < group_; ++g) {
 		const int M = conv_out_channels_ / group_;
 		const int row_offset = conv_out_channels_ /group_ + 1;
 		const int *row_offsets = nz_weight_index_pointers_.cpu_data() + row_offset * g;
-		int nnz = row_offsets[M];
-		Dtype sparsity = (Dtype)1.0 - (Dtype)nnz/ (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
+		Dtype sparsity = (Dtype)1.0 - (Dtype)row_offsets[M]/ (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
+		LOG(INFO)<<"Sparsity of "<< Layer<Dtype>::layer_param().name() << ": "<< sparsity;
 		//if(sparsity > (Dtype)0.6) {
 		if(1) {
 			// cxh: only do this when sparsity > 60%
@@ -609,19 +618,14 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 			const int *rowptr = weight_rowptr_[g];
 			const Dtype *values = weight_values_[g];
 			const int *colidx = weight_colidx_[g];
-			//const int *rowptr = nz_weight_index_pointers_.cpu_data() + row_offset * g;
-			//const Dtype *values = nz_weight_values_.cpu_data()+ weight_offset_ * g;
-			//const int *colidx = nz_weight_indices_.cpu_data()+ weight_offset_ * g;
-			caffe_cpu_blocked_sconv<Dtype>(in_temp, conv_in_channels_/group_, height, width, 
-					pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
-					rowptr, colidx, values, kernel_h, kernel_w,
+			caffe_cpu_blocked_sconv<Dtype,false>(in_temp, conv_in_channels_/group_, 
+					height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, 
+					dilation_w, rowptr, colidx, values, kernel_h, kernel_w,
 					(const int **)(&weight_rowptr_blocked_[0] + g*ncolblock),
 					(const int **)(&weight_colidx_blocked_[0] + g*ncolblock),
 					(const Dtype **)(&weight_values_blocked_[0] + g*ncolblock),
-					ncolblock, this->blobs_[1]->cpu_data(),
-					output + output_offset_ * g, M,
-					output_scratch_ + tid*OC_BLOCK*output_h*((output_w + 16 - 1)/16*16), 
-					input_padded_len);
+					ncolblock, this->blobs_[1]->cpu_data(), output + output_offset_ * g, M,
+					output_scratch_ + tid*OC_BLOCK*output_h*((output_w + 16 - 1)/16*16), num_);
 #else
 			const int *rowptr = nz_weight_index_pointers_.cpu_data() + row_offset * g;
 			const Dtype *values = nz_weight_values_.cpu_data()+ weight_offset_ * g;
@@ -630,10 +634,9 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 					pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
 					rowptr, colidx, values, kernel_h, kernel_w,
 					this->blobs_[1]->cpu_data(),
-					output + output_offset_ * g, M,
-					input_padded_len);
+					output + output_offset_ * g, M, input_padded_len);
 #endif
-#endif
+#endif // end LOWERING
 		} else {
 			// this is the original caffe implementation: dense matrix multiplication
 			caffe_cpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
@@ -720,7 +723,7 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 	int dilation_w = dilation_.cpu_data()[1];
 
 	Dtype *d_input_padded;
-	int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
+	//int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
 	//CUDA_CHECK(cudaMalloc((void **)&d_input_padded, sizeof(Dtype) * input_padded_len));
 	//CUDA_CHECK(cudaMemset(d_input_padded, 0, input_padded_len * sizeof(Dtype)));
 	d_input_padded = d_input_padded_;
@@ -740,7 +743,7 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 	for (int g = 0; g < group_; ++g) {
 		// cxh
 		Dtype sparsity = (Dtype)1.0 - (Dtype)nz_num_[g] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
-		//LOG(INFO)<<"Sparsity of "<< Layer<Dtype>::layer_param().name() << ": "<< sparsity;
+		LOG(INFO)<<"Sparsity of "<< Layer<Dtype>::layer_param().name() << ": "<< sparsity;
 		//if(sparsity < (Dtype)0.6) {
 		if(0) {
 			//printf("dense weight matrix multi. dense feature map matrix\n");

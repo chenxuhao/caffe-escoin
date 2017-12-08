@@ -1,8 +1,9 @@
 #include <vector>
 #include <omp.h> // cxh
 #include "caffe/layers/conv_layer.hpp"
-//#include "caffe/util/cpu_info.hpp" // cxh
-
+#ifdef USE_ICC
+#include "caffe/util/cpu_info.hpp"
+#endif
 namespace caffe {
 
 template <typename Dtype>
@@ -33,18 +34,35 @@ void ConvolutionLayer<Dtype>::Forward_cpu(const vector<Blob<Dtype>*>& bottom,
 	if (this->bias_term_) {
 		bias = this->blobs_[1]->cpu_data();
 	}//*/
+	mkl_set_num_threads(1);
 	for (int i = 0; i < bottom.size(); ++i) {
 		const Dtype* bottom_data = bottom[i]->cpu_data();
 		Dtype* top_data = top[i]->mutable_cpu_data();
-		//#pragma omp parallel for // cxh
-		for (int n = 0; n < this->num_; ++n) {
-			this->forward_cpu_gemm(bottom_data + n * this->bottom_dim_, weight,
-					top_data + n * this->top_dim_);
+		int n_begin, n_end, tid;
+#ifndef USE_ICC
+		#pragma omp parallel
+		{
+		//tid = omp_get_thread_num();
+		cpu::OpenMpManager::getBatchThreadPartition(&n_begin, &n_end, this->num_);
+#else
+		n_begin = 0; n_end = this->num_;
+		#pragma omp parallel for schedule(static)// cxh
+#endif
+		for (int n = n_begin; n < n_end; ++n) {
+		//for (int n = 0; n < this->num_; ++n) {
+			//tid = omp_get_thread_num();
+			//printf("i=%d, tid=%d, bid=%d, cbegin=%d, cend=%d, num_=%d\n", 
+			//	i, tid, n, n_begin, n_end, this->num_);
+			this->forward_cpu_gemm(bottom_data + n * this->bottom_dim_, weight, 
+					top_data + n * this->top_dim_, n);
 			if (this->bias_term_) {
 				//const Dtype* bias = this->blobs_[1]->cpu_data();
 				this->forward_cpu_bias(top_data + n * this->top_dim_, bias);
 			}
 		}
+#ifndef USE_ICC
+		}
+#endif
 	}
 	timer.Stop();
 	//printf("[cxh] %s: %.2f ms\n", this->layer_param().name().c_str(), timer.MicroSeconds()/1000);

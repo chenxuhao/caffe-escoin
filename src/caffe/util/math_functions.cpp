@@ -211,10 +211,7 @@ void caffe_cpu_blocked_sconv(const Dtype *input_padded, int in_channels,
 	//const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
 	//const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
 	if (dilation_h != 1 || dilation_w != 1) {
-		caffe_cpu_sconv_default<FUSE_RELU>(input_padded, in_channels, height, width, 
-				pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
-				rowptr, colidx, values, kernel_h, kernel_w, bias,
-				output, out_channels);
+		// Goto default
 	} else if (stride_h == 1 && stride_w == 1 && height == width && kernel_h == kernel_w && pad_h == pad_w) {
 		int num_oc_blocks = (out_channels + OC_BLOCK - 1)/OC_BLOCK;
 		int oc_block_begin, oc_block_end;
@@ -385,7 +382,7 @@ void caffe_cpu_blocked_sconv(const Dtype *input_padded, int in_channels,
 		}
 		else if (0 == pad_h) { // zero padding
 		}
-	} else if (height == 227 && width == 227 && pad_h == 0 && pad_w == 0 && stride_h == 4 && stride_w == 4 && kernel_w == 11 && kernel_h == 11) {
+/*	} else if (height == 227 && width == 227 && pad_h == 0 && pad_w == 0 && stride_h == 4 && stride_w == 4 && kernel_w == 11 && kernel_h == 11) {
 		// conv1 of AlexNet
 		assert(!FUSE_RELU);
 		int WIDTH = 227;
@@ -455,13 +452,12 @@ void caffe_cpu_blocked_sconv(const Dtype *input_padded, int in_channels,
 				}
 			}
 		}
+		return;
 //*/
-	} else {
-		caffe_cpu_sconv_default<FUSE_RELU>(input_padded, in_channels, height, width, 
-				pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
-				rowptr, colidx, values, kernel_h, kernel_w, bias,
-				output, out_channels);
 	}
+	caffe_cpu_sconv_default<FUSE_RELU>(input_padded, in_channels, 
+		height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
+		rowptr, colidx, values, kernel_h, kernel_w, bias, output, out_channels);
 }
 
 template 
