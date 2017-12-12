@@ -208,8 +208,10 @@ void caffe_gpu_sconv(const Dtype *input_padded,
 {
 	const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
 	const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
-	const int TILE_SZ = 16;//CAFFE_CUDA_NUM_THREADS;
-	dim3 grid( (output_h-1)/TILE_SZ+1, (output_w-1)/TILE_SZ+1, (out_channels-1)/4+1 ), threads( TILE_SZ, TILE_SZ, 4 );
+	const int TILE_SZ = 4;//CAFFE_CUDA_NUM_THREADS;
+	const int OC_BLOCK = 16;
+	dim3 grid((output_h-1)/TILE_SZ+1, (output_w-1)/TILE_SZ+1, (out_channels-1)/OC_BLOCK+1);
+	dim3 threads(TILE_SZ, TILE_SZ, OC_BLOCK);
 	if (dilation_h != 1 || dilation_w != 1) {
 		sconv_kernel1<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
 					height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 

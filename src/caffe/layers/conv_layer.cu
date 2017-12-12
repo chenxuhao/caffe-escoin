@@ -7,15 +7,17 @@ namespace caffe {
 template <typename Dtype>
 void ConvolutionLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
+  compute_time = 0; copy_time = 0;
   Timer timer;
   timer.Start();
   const Dtype* weight = this->blobs_[0]->gpu_data();
   for (int i = 0; i < bottom.size(); ++i) {
+    const Dtype* h_bottom_data = bottom[i]->cpu_data();
     const Dtype* bottom_data = bottom[i]->gpu_data();
     Dtype* top_data = top[i]->mutable_gpu_data();
     for (int n = 0; n < this->num_; ++n) {
       this->forward_gpu_gemm(bottom_data + n * this->bottom_dim_, weight,
-          top_data + n * this->top_dim_);
+          top_data + n * this->top_dim_, false, h_bottom_data + n * this->bottom_dim_);
       if (this->bias_term_) {
         const Dtype* bias = this->blobs_[1]->gpu_data();
         this->forward_gpu_bias(top_data + n * this->top_dim_, bias);
@@ -25,6 +27,8 @@ void ConvolutionLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
   timer.Stop();
   LOG(INFO) << this->layer_param().name() << " (Forward_gpu): "
 	  << timer.MilliSeconds() << " ms";
+  printf("[cxh] %s: %.2f ms\n", this->layer_param().name().c_str(), timer.MicroSeconds()/1000);
+  printf("\t compute time: %.2f ms, copy time: %.2f ms\n", compute_time, copy_time);
 }
 
 template <typename Dtype>

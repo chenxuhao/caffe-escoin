@@ -9,6 +9,9 @@
 #include "caffe/util/im2col.hpp"
 
 namespace caffe {
+// cxh
+extern double copy_time;
+extern double compute_time;
 
 /**
  * @brief Abstract base class that factors out the BLAS code common to
@@ -44,8 +47,8 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   void backward_cpu_bias(Dtype* bias, const Dtype* input);
 
 #ifndef CPU_ONLY
-  void forward_gpu_gemm(const Dtype* col_input, const Dtype* weights,
-      Dtype* output, bool skip_im2col = false);
+  void forward_gpu_gemm(const Dtype* d_input, const Dtype* weights,
+      Dtype* output, bool skip_im2col = false, const Dtype* h_input = NULL);
   void forward_gpu_bias(Dtype* output, const Dtype* bias);
   void backward_gpu_gemm(const Dtype* input, const Dtype* weights,
       Dtype* col_output);

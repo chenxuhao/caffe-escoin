@@ -697,10 +697,13 @@ void BaseConvolutionLayer<Dtype>::backward_cpu_bias(Dtype* bias,
 }
 
 #ifndef CPU_ONLY
-
+double copy_time = 0;
+double compute_time = 0;
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
-		const Dtype* weights, Dtype* output, bool skip_im2col) {
+		const Dtype* weights, Dtype* output, bool skip_im2col, const Dtype* h_input) {
+	Timer timer;
+	timer.Start();
 	const Dtype* col_buff = input;
 #ifdef LOWERING
 	if (!is_1x1_) {
@@ -723,23 +726,22 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 	int dilation_w = dilation_.cpu_data()[1];
 
 	Dtype *d_input_padded;
-	//int input_padded_len = conv_in_channels_ * (height + pad_h) * (width + pad_w) + pad_h * (width + 2 * pad_w);
-	//CUDA_CHECK(cudaMalloc((void **)&d_input_padded, sizeof(Dtype) * input_padded_len));
-	//CUDA_CHECK(cudaMemset(d_input_padded, 0, input_padded_len * sizeof(Dtype)));
-	d_input_padded = d_input_padded_;
-	for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
-		//CUDA_CHECK(cudaMemset(d_input_padded + in_channel * (height + pad_h) * (width + pad_w),
-		//		0, sizeof(Dtype) * pad_h * (width + pad_w)) );
-		for (int input_row = 0; input_row < height; ++input_row) {
-			//	CUDA_CHECK(cudaMemset(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w),
-			//			0, sizeof(Dtype) * pad_w));
-			CUDA_CHECK(cudaMemcpy(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
-					input + (in_channel * height + input_row) * width, sizeof(Dtype) * width, cudaMemcpyDeviceToDevice));
+	if(pad_h == 0 && pad_w == 0)
+		d_input_padded = (Dtype *)input;
+	else {
+		d_input_padded = d_input_padded_;
+		for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
+			for (int input_row = 0; input_row < height; ++input_row) {
+				CUDA_CHECK(cudaMemcpy(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
+						//h_input + (in_channel * height + input_row) * width, sizeof(Dtype) * width, cudaMemcpyHostToDevice));
+						input + (in_channel * height + input_row) * width, sizeof(Dtype) * width, cudaMemcpyDeviceToDevice));
+			}
 		}
 	}
-	//CUDA_CHECK(cudaMemset(d_input_padded + conv_in_channels_ * (height + pad_h) * (width + pad_w),
-	//		0, sizeof(Dtype) * pad_h * (width + 2 * pad_w)));
 #endif
+	timer.Stop();
+	copy_time += timer.MicroSeconds()/1000;
+	timer.Start();
 	for (int g = 0; g < group_; ++g) {
 		// cxh
 		Dtype sparsity = (Dtype)1.0 - (Dtype)nz_num_[g] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
@@ -778,6 +780,8 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 #endif
 		}
 	}
+	timer.Stop();
+	compute_time += timer.MicroSeconds()/1000;
 }
 
 template <typename Dtype>
