@@ -27,7 +27,7 @@ static const int OC_BLOCK = 16;
 //static const int COL_MAJOR_OC_BLOCK = 64;
 
 extern unsigned long long conv_cycles_of_this_batch[1024*16], transpose_cycle, pool_cycle;
-
+#ifdef USE_ICC
 static int get_col_major_ic_block(int nnz, int num_out_channels, int num_in_channels) {
   // # of in-channels to have on average 32 non-zeros per out-channel
   double nnz_per_oc_and_ic = (double)nnz/num_out_channels/num_in_channels;
@@ -38,7 +38,7 @@ static int get_col_major_ic_block(int nnz, int num_out_channels, int num_in_chan
   }
   return ret;
 }
-
+#endif
 extern int flop_cnt;
 
 /**
@@ -70,6 +70,7 @@ static /*inline*/ void __attribute__((noinline)) sconv_unit_stride(
     float *scratch,
     int in_channels, int out_channels) // scratch: 832B per OC_BLOCK
 {
+#ifdef USE_ICC
   //unsigned long long t = __rdtsc();
 
   assert(PAD <= (K - 1)/2);
@@ -582,6 +583,9 @@ _Pragma("unroll(REG_BLOCK_W") \
   } // ncolblocks == 1
 
   //conv_cycles_of_this_batch[omp_get_thread_num()*16] += __rdtsc() - t;
+#else
+  NOT_IMPLEMENTED;
+#endif
 }
 
 /**

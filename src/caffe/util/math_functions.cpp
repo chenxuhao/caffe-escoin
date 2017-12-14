@@ -214,7 +214,8 @@ void caffe_cpu_blocked_sconv(const Dtype *input_padded, int in_channels,
 		// Goto default
 	} else if (stride_h == 1 && stride_w == 1 && height == width && kernel_h == kernel_w && pad_h == pad_w) {
 		int num_oc_blocks = (out_channels + OC_BLOCK - 1)/OC_BLOCK;
-		int oc_block_begin, oc_block_end;
+		int oc_block_begin = 0;
+		int oc_block_end = num_oc_blocks;
 #ifdef USE_ICC
 		cpu::OpenMpManager::getSimpleGroupedThreadPartition(
 				&oc_block_begin, &oc_block_end, num_oc_blocks, ninputs);

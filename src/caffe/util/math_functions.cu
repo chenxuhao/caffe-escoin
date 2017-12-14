@@ -255,6 +255,31 @@ void caffe_gpu_stretch(const int *rowptr, int *colidx, int M,
 	stretch_kernel<<<nblocks, nthreads>>>(rowptr, colidx, M, 
 			height, width, pad_h, pad_w, kernel_h, kernel_w);
 }
+
+template <typename Dtype>
+__global__ void copy_input(Dtype *dst, const Dtype *src, int num_channels, int height, int width, int pad_h, int pad_w) {
+	int xid = blockIdx.x * blockDim.x + threadIdx.x;
+	int yid = blockIdx.y * blockDim.y + threadIdx.y;
+	int zid = blockIdx.z * blockDim.z + threadIdx.z;
+	Dtype * dst_ptr = dst + (xid * (height + pad_h) + yid + pad_h) * (width + pad_w) + pad_w;
+	const Dtype * src_ptr = src + (xid * height + yid) * width;
+	if(xid < num_channels)
+		if(yid < height)
+			if(zid < width)
+				dst_ptr[zid] = src_ptr[zid];
+}
+
+template <typename Dtype>
+void copy_input_data(Dtype *dst, const Dtype *src, int num_channels, int height, int width, int pad_h, int pad_w) {
+	const int TILE_SZ = 4;
+	const int BLOCK_SZ = 16;
+	dim3 grid((num_channels-1)/BLOCK_SZ+1, (height-1)/TILE_SZ+1, (width-1)/TILE_SZ+1);
+	dim3 threads(BLOCK_SZ, TILE_SZ, TILE_SZ);
+	copy_input<Dtype><<<grid,threads>>>(dst, src, num_channels, height, width, pad_h, pad_w);
+}
+
+template void copy_input_data<float>(float *dst, const float *src, int num_channels, int height, int width, int pad_h, int pad_w);
+template void copy_input_data<double>(double *dst, const double *src, int num_channels, int height, int width, int pad_h, int pad_w);
 // end of cxh
 
 template <>

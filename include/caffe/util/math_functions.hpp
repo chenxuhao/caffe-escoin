@@ -215,14 +215,19 @@ void caffe_gpu_sparse_dense2csr(const int M, const int N,
 // cxh: direct sparse convolution on GPU
 template <typename Dtype>
 void caffe_gpu_sconv(const Dtype *input_padded,
-		const int *rowptr, const int *colidx, const Dtype *values,
-		int height, int width, int pad_h, int pad_w,
-		int stride_h, int stride_w, int dilation_h, int dilation_w,
-		int kernel_h, int kernel_w, Dtype *output, int out_channels); 
+	const int *rowptr, const int *colidx, const Dtype *values,
+	int height, int width, int pad_h, int pad_w,
+	int stride_h, int stride_w, int dilation_h, int dilation_w,
+	int kernel_h, int kernel_w, Dtype *output, int out_channels); 
 
 // cxh: strech the input vector for direct sconv
 void caffe_gpu_stretch(const int *rowptr, int *colidx, int M, 
-		int height, int width, int pad_h, int pad_w, int kernel_h, int kernel_w);
+	int height, int width, int pad_h, int pad_w, int kernel_h, int kernel_w);
+
+// cxh: copy input data
+template <typename Dtype>
+void copy_input_data(Dtype *dst, const Dtype *src, int num_channels, 
+	int height, int width, int pad_h, int pad_w);
 
 template <typename Dtype>
 void caffe_gpu_gemv(const CBLAS_TRANSPOSE TransA, const int M, const int N,

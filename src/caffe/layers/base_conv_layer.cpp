@@ -701,7 +701,7 @@ double copy_time = 0;
 double compute_time = 0;
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
-		const Dtype* weights, Dtype* output, bool skip_im2col, const Dtype* h_input) {
+		const Dtype* weights, Dtype* output, bool skip_im2col) {
 	Timer timer;
 	timer.Start();
 	const Dtype* col_buff = input;
@@ -730,13 +730,7 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 		d_input_padded = (Dtype *)input;
 	else {
 		d_input_padded = d_input_padded_;
-		for (int in_channel = 0; in_channel < conv_in_channels_; ++in_channel) {
-			for (int input_row = 0; input_row < height; ++input_row) {
-				CUDA_CHECK(cudaMemcpy(d_input_padded + (in_channel * (height + pad_h) + input_row + pad_h) * (width + pad_w) + pad_w,
-						//h_input + (in_channel * height + input_row) * width, sizeof(Dtype) * width, cudaMemcpyHostToDevice));
-						input + (in_channel * height + input_row) * width, sizeof(Dtype) * width, cudaMemcpyDeviceToDevice));
-			}
-		}
+		copy_input_data<Dtype>(d_input_padded, input, conv_in_channels_, height, width, pad_h, pad_w);
 	}
 #endif
 	timer.Stop();
