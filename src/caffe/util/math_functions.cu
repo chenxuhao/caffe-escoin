@@ -227,10 +227,12 @@ __global__ void sconv_kernel_warp(const int *rowptr, const int *colidx, const Dt
 		if (output_col < output_w) {
 			const Dtype *input_ptr = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
 			for(int oc = warp_id; oc < out_channels; oc += num_warps) {
-				if(thread_lane < 2)
-					ptrs[row][col][warp_lane][thread_lane] = rowptr[oc + thread_lane];
-				const int row_start = ptrs[row][col][warp_lane][0]; //rowptr[oc]
-				const int row_end   = ptrs[row][col][warp_lane][1]; //rowptr[oc+1]
+				//if(thread_lane < 2)
+				//	ptrs[row][col][warp_lane][thread_lane] = rowptr[oc + thread_lane];
+				//const int row_start = ptrs[row][col][warp_lane][0]; //rowptr[oc]
+				//const int row_end   = ptrs[row][col][warp_lane][1]; //rowptr[oc+1]
+				const int row_start = rowptr[oc];
+				const int row_end   = rowptr[oc+1];
 				Dtype sum = 0;
 				for (int j = row_start + thread_lane; j < row_end; j += WARP_SIZE) {
 					sum += values[j] * input_ptr[colidx[j]];
@@ -269,8 +271,8 @@ void caffe_gpu_sconv(const Dtype *input_padded,
 	const int max_blocks_per_SM = maximum_residency(sconv_kernel_warp<Dtype>, BLOCK_SIZE, 0);
 	const int max_num_blocks = max_blocks_per_SM * nSM;
 	nblocks = out_channels;//std::min(max_num_blocks, DIVIDE_INTO(out_channels, (OC_BLOCK/WARP_SIZE)));
-	printf("nSM=%d, max_blocks_per_SM=%d, max_num_blocks=%d, out_channels=%d, nblocks=%d\n", 
-			nSM, max_blocks_per_SM, max_num_blocks, out_channels, nblocks);
+	//printf("nSM=%d, max_blocks_per_SM=%d, max_num_blocks=%d, out_channels=%d, nblocks=%d\n", 
+	//		nSM, max_blocks_per_SM, max_num_blocks, out_channels, nblocks);
 #endif
 	dim3 grid((output_h-1)/TILE_SIZE+1, (output_w-1)/TILE_SIZE+1, nblocks);
 	dim3 threads(TILE_SIZE, TILE_SIZE, OC_BLOCK);
