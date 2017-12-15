@@ -7,6 +7,7 @@
 
 #include "caffe/common.hpp"
 #include "caffe/util/math_functions.hpp"
+#include "caffe/util/cuda_launch_config.hpp"
 
 namespace caffe {
 
@@ -201,8 +202,8 @@ __global__ void sconv_kernel_base(const int *rowptr, const int *colidx, const Dt
 #define BLOCK_SIZE 512
 #define WARP_SIZE 32
 #define TILE_SIZE 4
-//#define OC_BLOCK BLOCK_SIZE/TILE_SIZE/TILE_SIZE
-#define OC_BLOCK 32
+#define OC_BLOCK (BLOCK_SIZE/TILE_SIZE/TILE_SIZE) // OC_BLOCK should be larger than WARP_SIZE when using WARP_KERNEL
+//#define OC_BLOCK 32
 template <typename Dtype>
 __global__ void sconv_kernel_warp(const int *rowptr, const int *colidx, const Dtype *values,
 		const Dtype *input_padded, int height, int width, int pad_h, int pad_w,
@@ -211,43 +212,46 @@ __global__ void sconv_kernel_warp(const int *rowptr, const int *colidx, const Dt
 	int output_row = blockIdx.x * blockDim.x + threadIdx.x;
 	int output_col = blockIdx.y * blockDim.y + threadIdx.y;
 
-	__shared__ Dtype sdata[OC_BLOCK + 16];
-	__shared__ int ptrs[OC_BLOCK/WARP_SIZE][2];
+	__shared__ Dtype sdata[TILE_SIZE][TILE_SIZE][OC_BLOCK + 16];
+	__shared__ int ptrs[TILE_SIZE][TILE_SIZE][OC_BLOCK/WARP_SIZE][2];
 	const int local_id = threadIdx.z;
 	const int thread_id = blockIdx.z * blockDim.z + threadIdx.z;
 	const int thread_lane = local_id & (WARP_SIZE-1);
 	const int warp_id = thread_id / WARP_SIZE;
 	const int warp_lane = local_id / WARP_SIZE;
 	const int num_warps = (OC_BLOCK / WARP_SIZE) * gridDim.z;
+	const int row = threadIdx.x;
+	const int col = threadIdx.y;
 
 	if (output_row < output_h) {
 		if (output_col < output_w) {
 			const Dtype *input_ptr = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
 			for(int oc = warp_id; oc < out_channels; oc += num_warps) {
 				if(thread_lane < 2)
-					ptrs[warp_lane][thread_lane] = rowptr[oc + thread_lane];
-				const int row_start = ptrs[warp_lane][0]; //rowptr[oc]
-				const int row_end   = ptrs[warp_lane][1]; //rowptr[oc+1]
+					ptrs[row][col][warp_lane][thread_lane] = rowptr[oc + thread_lane];
+				const int row_start = ptrs[row][col][warp_lane][0]; //rowptr[oc]
+				const int row_end   = ptrs[row][col][warp_lane][1]; //rowptr[oc+1]
 				Dtype sum = 0;
 				for (int j = row_start + thread_lane; j < row_end; j += WARP_SIZE) {
 					sum += values[j] * input_ptr[colidx[j]];
 				}
 
-				// reduce local sums to row sum (ASSUME: warpsize 32)
-				sdata[local_id] = sum; __syncthreads();
-				sdata[local_id] = sum = sum + sdata[local_id + 16]; __syncthreads(); 
-				sdata[local_id] = sum = sum + sdata[local_id +  8]; __syncthreads();
-				sdata[local_id] = sum = sum + sdata[local_id +  4]; __syncthreads();
-				sdata[local_id] = sum = sum + sdata[local_id +  2]; __syncthreads();
-				sdata[local_id] = sum = sum + sdata[local_id +  1]; __syncthreads();
+				// reduce local sums to sum (ASSUME: warpsize 32)
+				sdata[row][col][local_id] = sum; __syncthreads();
+				sdata[row][col][local_id] = sum = sum + sdata[row][col][local_id+16]; __syncthreads(); 
+				sdata[row][col][local_id] = sum = sum + sdata[row][col][local_id+ 8]; __syncthreads();
+				sdata[row][col][local_id] = sum = sum + sdata[row][col][local_id+ 4]; __syncthreads();
+				sdata[row][col][local_id] = sum = sum + sdata[row][col][local_id+ 2]; __syncthreads();
+				sdata[row][col][local_id] = sum = sum + sdata[row][col][local_id+ 1]; __syncthreads();
 
 				if (thread_lane == 0)
-					output[(oc * output_h + output_row) * output_w + output_col] = sdata[local_id];
+					output[(oc * output_h + output_row) * output_w + output_col] = sdata[row][col][local_id];
 			}
 		}
 	}
 }
-
+#define WARP_KERNEL
+#define DIVIDE_INTO(x,y) ((x + y - 1)/y)
 template <typename Dtype>
 void caffe_gpu_sconv(const Dtype *input_padded,
 		const int *rowptr, const int *colidx, const Dtype *values,
@@ -257,16 +261,33 @@ void caffe_gpu_sconv(const Dtype *input_padded,
 {
 	const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
 	const int output_w = (width + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
-	dim3 grid((output_h-1)/TILE_SIZE+1, (output_w-1)/TILE_SIZE+1, (out_channels-1)/OC_BLOCK+1);
+	int nblocks = (out_channels - 1) / OC_BLOCK + 1;
+#ifdef WARP_KERNEL
+	cudaDeviceProp deviceProp;
+	CUDA_CHECK(cudaGetDeviceProperties(&deviceProp, 0));
+	const int nSM = deviceProp.multiProcessorCount;
+	const int max_blocks_per_SM = maximum_residency(sconv_kernel_warp<Dtype>, BLOCK_SIZE, 0);
+	const int max_num_blocks = max_blocks_per_SM * nSM;
+	nblocks = out_channels;//std::min(max_num_blocks, DIVIDE_INTO(out_channels, (OC_BLOCK/WARP_SIZE)));
+	printf("nSM=%d, max_blocks_per_SM=%d, max_num_blocks=%d, out_channels=%d, nblocks=%d\n", 
+			nSM, max_blocks_per_SM, max_num_blocks, out_channels, nblocks);
+#endif
+	dim3 grid((output_h-1)/TILE_SIZE+1, (output_w-1)/TILE_SIZE+1, nblocks);
 	dim3 threads(TILE_SIZE, TILE_SIZE, OC_BLOCK);
 	if (dilation_h != 1 || dilation_w != 1) {
 		sconv_kernel<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
 					height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
 					kernel_h, kernel_w, output, out_channels, output_h, output_w);
 	} else {
+#ifdef WARP_KERNEL
+		sconv_kernel_warp<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
+					height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
+					output, out_channels, output_h, output_w);
+#else
 		sconv_kernel_base<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
 					height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
 					output, out_channels, output_h, output_w);
+#endif
 	}
 }
 
