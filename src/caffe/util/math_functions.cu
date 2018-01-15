@@ -199,15 +199,50 @@ __global__ void sconv_kernel_base(const int *rowptr, const int *colidx, const Dt
 	}
 }
 
-#define BLOCK_SIZE 256 // 4*4*32
+#define BLOCK_SIZE (TILE_H*TILE_W) // 4*4*32
 #define WARP_SIZE 32
 #define VECTOR_SIZE 16
-#define TILE_SIZE 16
-#define OC_BLOCK (BLOCK_SIZE/TILE_SIZE/TILE_SIZE) // OC_BLOCK should be larger than WARP_SIZE when using WARP_KERNEL
+#define TILE_H 16
+#define TILE_W 32
+#define OC_BLOCK (BLOCK_SIZE/TILE_H/TILE_W) // OC_BLOCK should be larger than WARP_SIZE when using WARP_KERNEL
 //#define OC_BLOCK 32
 #define DIVIDE_INTO(x,y) ((x + y - 1)/y)
-//#define WARP_KERNEL
 
+#define TILED_KERNEL
+template <typename Dtype>
+__global__ void sconv_kernel_tiled(const int * __restrict__ rowptr, 
+		const int * __restrict__ colidx, const Dtype * __restrict__ values,
+		const Dtype * __restrict__ input_padded, int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int kernel_h, int kernel_w,
+		Dtype *output, int out_channels, const int output_h, const int output_w) {
+	const int output_row = blockIdx.y * blockDim.y + threadIdx.y;
+	const int output_col = blockIdx.x * blockDim.x + threadIdx.x;
+	const int oc = blockIdx.z * blockDim.z + threadIdx.z;
+	__shared__ Dtype ins[BLOCK_SIZE];
+	if (oc < out_channels) {
+		if (output_row < output_h) {
+			if (output_col < output_w) {
+				const Dtype *in_ptr = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
+				Dtype sum = 0;
+				//int row_start = __ldg(rowptr+oc);
+				int row_start = rowptr[oc];
+				//int row_end = __ldg(rowptr+oc+1);
+				int row_end = rowptr[oc+1];
+				for (int j = row_start; j < row_end; ++j) {
+					//Dtype weight = values[j];
+					Dtype weight = __ldg(values+j);
+					int pos = colidx[j];
+					//int pos = __ldg(colidx+j);
+					//sum += weight * in_ptr[pos];
+					sum += weight * __ldg(in_ptr+pos);
+				}
+				output[(oc * output_h + output_row) * output_w + output_col] = sum;
+			}
+		}
+	}
+}
+
+//#define WARP_KERNEL
 // the WARPED version uses one thread block to process one output channel 
 template <typename Dtype>
 __global__ void sconv_kernel_warp(const int *rowptr, const int *colidx, const Dtype *values,
@@ -221,8 +256,8 @@ __global__ void sconv_kernel_warp(const int *rowptr, const int *colidx, const Dt
 	const int lidy = threadIdx.y;
 	//const int lidz = threadIdx.z;
 
-	__shared__ Dtype sdata[TILE_SIZE][TILE_SIZE*32+16];
-	//__shared__ int ptrs[TILE_SIZE][TILE_SIZE][2];
+	__shared__ Dtype sdata[TILE_H][TILE_W*32+16];
+	//__shared__ int ptrs[TILE_H][TILE_W][2];
 	const int thread_lane = lidx & (WARP_SIZE-1);
 	const int warp_id = gidx / WARP_SIZE;
 	const int warp_lane = lidx / WARP_SIZE;
@@ -275,8 +310,8 @@ void caffe_gpu_sconv(const Dtype *input_padded,
 	//print_device_info(0);
 	const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
 	const int output_w = (width  + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
-	const int ntiles_h = (output_h - 1) / TILE_SIZE + 1;
-	const int ntiles_w = (output_w - 1) / TILE_SIZE + 1;
+	const int ntiles_h = (output_h - 1) / TILE_H + 1;
+	const int ntiles_w = (output_w - 1) / TILE_W + 1;
 	int nblocks = (out_channels - 1) / OC_BLOCK + 1;
 #ifdef WARP_KERNEL
 	cudaDeviceProp deviceProp;
@@ -287,23 +322,23 @@ void caffe_gpu_sconv(const Dtype *input_padded,
 	//nblocks = std::min(max_num_blocks, DIVIDE_INTO(out_channels, (BLOCK_SIZE/WARP_SIZE)));
 	//printf("nSM=%d, max_blocks_per_SM=%d, max_num_blocks=%d, nblocks=%d\n", 
 	//		nSM, max_blocks_per_SM, max_num_blocks, nblocks);
-	dim3 threads(WARP_SIZE*TILE_SIZE, TILE_SIZE);
+	dim3 threads(WARP_SIZE*TILE_W, TILE_H);
 	dim3 grid(ntiles_w, ntiles_h, out_channels);
 #else
-	dim3 threads(TILE_SIZE, TILE_SIZE, OC_BLOCK);
+	dim3 threads(TILE_W, TILE_H, OC_BLOCK);
 	dim3 grid(ntiles_w, ntiles_h, nblocks);
 #endif
-	printf("m=out_channels=%d, height=%d, width=%d, ", out_channels, height, width);
-	printf("output_h=%d, output_w=%d, ", output_h, output_w);
-	printf("stride_h=%d, stride_w=%d, ", stride_h, stride_w);
-	printf("pad_h=%d, pad_width=%d\n", pad_h, pad_w);
+	//printf("m=out_channels=%d, height=%d, width=%d, ", out_channels, height, width);
+	//printf("output_h=%d, output_w=%d, ", output_h, output_w);
+	//printf("stride_h=%d, stride_w=%d, ", stride_h, stride_w);
+	//printf("pad_h=%d, pad_width=%d\n", pad_h, pad_w);
 	if (dilation_h != 1 || dilation_w != 1) {
 		sconv_kernel<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
 					height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
 					kernel_h, kernel_w, output, out_channels, output_h, output_w);
 	} else {
-#ifdef WARP_KERNEL
-		sconv_kernel_warp<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
+#ifdef TILED_KERNEL
+		sconv_kernel_tiled<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
 					height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
 					output, out_channels, output_h, output_w);
 #else
