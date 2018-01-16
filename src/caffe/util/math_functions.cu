@@ -203,7 +203,7 @@ __global__ void sconv_kernel_base(const int *rowptr, const int *colidx, const Dt
 #define WARP_SIZE 32
 #define VECTOR_SIZE 16
 #define TILE_H 16
-#define TILE_W 32
+#define TILE_W 16
 #define OC_BLOCK (BLOCK_SIZE/TILE_H/TILE_W) // OC_BLOCK should be larger than WARP_SIZE when using WARP_KERNEL
 //#define OC_BLOCK 32
 #define DIVIDE_INTO(x,y) ((x + y - 1)/y)
@@ -218,20 +218,31 @@ __global__ void sconv_kernel_tiled(const int * __restrict__ rowptr,
 	const int output_row = blockIdx.y * blockDim.y + threadIdx.y;
 	const int output_col = blockIdx.x * blockDim.x + threadIdx.x;
 	const int oc = blockIdx.z * blockDim.z + threadIdx.z;
-	__shared__ Dtype ins[BLOCK_SIZE];
+	__shared__ Dtype values_s[4096];
+	__shared__ int colidx_s[4096];
+
+	int row_start = rowptr[oc];
+	int row_end = rowptr[oc+1];
+	int tid = threadIdx.y*TILE_W + threadIdx.x;
+	for (int i = row_start+tid; i < row_end; i += BLOCK_SIZE) {
+		colidx_s[i-row_start] = colidx[i];
+		values_s[i-row_start] = values[i];
+	}
+	__syncthreads();
+
 	if (oc < out_channels) {
 		if (output_row < output_h) {
 			if (output_col < output_w) {
 				const Dtype *in_ptr = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
 				Dtype sum = 0;
 				//int row_start = __ldg(rowptr+oc);
-				int row_start = rowptr[oc];
 				//int row_end = __ldg(rowptr+oc+1);
-				int row_end = rowptr[oc+1];
 				for (int j = row_start; j < row_end; ++j) {
 					//Dtype weight = values[j];
-					Dtype weight = __ldg(values+j);
-					int pos = colidx[j];
+					Dtype weight = values_s[j-row_start];
+					//Dtype weight = __ldg(values+j);
+					//int pos = colidx[j];
+					int pos = colidx_s[j-row_start];
 					//int pos = __ldg(colidx+j);
 					//sum += weight * in_ptr[pos];
 					sum += weight * __ldg(in_ptr+pos);
