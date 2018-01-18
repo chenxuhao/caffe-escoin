@@ -207,6 +207,7 @@ __global__ void sconv_kernel_base(const int *rowptr, const int *colidx, const Dt
 #define OC_BLOCK (BLOCK_SIZE/TILE_H/TILE_W) // OC_BLOCK should be larger than WARP_SIZE when using WARP_KERNEL
 //#define OC_BLOCK 32
 #define DIVIDE_INTO(x,y) ((x + y - 1)/y)
+#define FILTER_SIZE 1024
 
 #define TILED_KERNEL
 template <typename Dtype>
@@ -218,11 +219,12 @@ __global__ void sconv_kernel_tiled(const int * __restrict__ rowptr,
 	const int output_row = blockIdx.y * blockDim.y + threadIdx.y;
 	const int output_col = blockIdx.x * blockDim.x + threadIdx.x;
 	const int oc = blockIdx.z * blockDim.z + threadIdx.z;
-	__shared__ Dtype values_s[4096];
-	__shared__ int colidx_s[4096];
 
 	int row_start = rowptr[oc];
 	int row_end = rowptr[oc+1];
+
+	__shared__ Dtype values_s[FILTER_SIZE];
+	__shared__ int colidx_s[FILTER_SIZE];
 	int tid = threadIdx.y*TILE_W + threadIdx.x;
 	for (int i = row_start+tid; i < row_end; i += BLOCK_SIZE) {
 		colidx_s[i-row_start] = colidx[i];
