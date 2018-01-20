@@ -207,7 +207,9 @@ __global__ void sconv_kernel_base(const int *rowptr, const int *colidx, const Dt
 #define OC_BLOCK (BLOCK_SIZE/TILE_H/TILE_W) // OC_BLOCK should be larger than WARP_SIZE when using WARP_KERNEL
 //#define OC_BLOCK 32
 #define DIVIDE_INTO(x,y) ((x + y - 1)/y)
-#define FILTER_SIZE 1024
+#define MIN(x,y) ((x < y)? x : y)
+#define SHMEM_SIZE 1024
+#define ITER (SHMEM_SIZE/BLOCK_SIZE)
 
 #define TILED_KERNEL
 template <typename Dtype>
@@ -219,36 +221,60 @@ __global__ void sconv_kernel_tiled(const int * __restrict__ rowptr,
 	const int output_row = blockIdx.y * blockDim.y + threadIdx.y;
 	const int output_col = blockIdx.x * blockDim.x + threadIdx.x;
 	const int oc = blockIdx.z * blockDim.z + threadIdx.z;
+	__shared__ Dtype values_s[SHMEM_SIZE];
+	__shared__ int colidx_s[SHMEM_SIZE];
+	const int tid = threadIdx.y*TILE_W + threadIdx.x;
 
-	int row_start = rowptr[oc];
-	int row_end = rowptr[oc+1];
+	const int row_start = rowptr[oc];
+	const int row_end = rowptr[oc+1];
+	//int row_start = __ldg(rowptr+oc);
+	//int row_end = __ldg(rowptr+oc+1);
+	const int length = row_end - row_start;
+	Dtype sum = 0;
+	int num = DIVIDE_INTO(length,SHMEM_SIZE);
+	//if(output_row == 0 && output_col == 0 && oc == 0) printf("num=%d\n", num);
+	for(int k = 0; k < num; k++) {
+		int base_addr = row_start + k * SHMEM_SIZE;
+		for (int i = 0; i < ITER; i ++) {
+			int index_s = tid + i * BLOCK_SIZE;
+			int index = base_addr + index_s;
+			if(index >= row_end) {
+				//break;
+				colidx_s[index_s] = 0;
+				values_s[index_s] = 0;
+			} else {
+				colidx_s[index_s] = colidx[index];
+				values_s[index_s] = values[index];
+			}
+			__syncthreads();
+		}
 
-	__shared__ Dtype values_s[FILTER_SIZE];
-	__shared__ int colidx_s[FILTER_SIZE];
-	int tid = threadIdx.y*TILE_W + threadIdx.x;
-	for (int i = row_start+tid; i < row_end; i += BLOCK_SIZE) {
-		colidx_s[i-row_start] = colidx[i];
-		values_s[i-row_start] = values[i];
+		//if (oc < out_channels) {
+			if (output_row < output_h) {
+				if (output_col < output_w) {
+					const Dtype *in_ptr = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
+					//Dtype sum = 0;
+					int end = SHMEM_SIZE;
+					if(k == num-1) end = MIN(end, length-SHMEM_SIZE*k);
+					for (int j = 0; j < end; ++j) {
+						//Dtype weight = values[j];
+						Dtype weight = values_s[j];
+						//Dtype weight = __ldg(values+j);
+						//int pos = colidx[j];
+						int pos = colidx_s[j];
+						//int pos = __ldg(colidx+j);
+						//sum += weight * in_ptr[pos];
+						sum += weight * __ldg(in_ptr+pos);
+					}
+					//output[(oc * output_h + output_row) * output_w + output_col] = sum;
+				}
+			}
+			__syncthreads();
+		//}
 	}
-	__syncthreads();
-
 	if (oc < out_channels) {
 		if (output_row < output_h) {
 			if (output_col < output_w) {
-				const Dtype *in_ptr = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
-				Dtype sum = 0;
-				//int row_start = __ldg(rowptr+oc);
-				//int row_end = __ldg(rowptr+oc+1);
-				for (int j = row_start; j < row_end; ++j) {
-					//Dtype weight = values[j];
-					Dtype weight = values_s[j-row_start];
-					//Dtype weight = __ldg(values+j);
-					//int pos = colidx[j];
-					int pos = colidx_s[j-row_start];
-					//int pos = __ldg(colidx+j);
-					//sum += weight * in_ptr[pos];
-					sum += weight * __ldg(in_ptr+pos);
-				}
 				output[(oc * output_h + output_row) * output_w + output_col] = sum;
 			}
 		}
@@ -273,7 +299,7 @@ __global__ void sconv_kernel_warp(const int *rowptr, const int *colidx, const Dt
 	//__shared__ int ptrs[TILE_H][TILE_W][2];
 	const int thread_lane = lidx & (WARP_SIZE-1);
 	const int warp_id = gidx / WARP_SIZE;
-	const int warp_lane = lidx / WARP_SIZE;
+	//const int warp_lane = lidx / WARP_SIZE;
 	//const int num_warps = (BLOCK_SIZE / WARP_SIZE) * gridDim.x * gridDim.y;
 
 	const int output_row = gidy;

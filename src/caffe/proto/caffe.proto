@@ -303,6 +303,9 @@ message ParamSpec {
 
   // The multiplier on the global weight decay for this parameter.
   optional float decay_mult = 4 [default = 1.0];
+
+  // cxh
+  optional string regularization_type = 8 [default = ""];
 }
 
 // NOTE
