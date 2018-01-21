@@ -54,6 +54,10 @@ DEFINE_string(sigint_effect, "stop",
 DEFINE_string(sighup_effect, "snapshot",
              "Optional; action to take when a SIGHUP signal is received: "
              "snapshot, stop or none.");
+// cxh
+DEFINE_int32(conv_mode, 0,
+    "Optional; the mode used to compute convolution, "
+    "could be LOWERED_GEMM (default), LOWERED_SPARSE, or SCONV.");
 
 // A simple registry for caffe commands.
 typedef int (*BrewFunction)();
@@ -284,6 +288,16 @@ int test() {
     LOG(INFO) << "Use CPU.";
     Caffe::set_mode(Caffe::CPU);
   }
+
+  // cxh
+  if(FLAGS_conv_mode == 0)
+	  Caffe::set_conv_mode(Caffe::LOWERED_GEMM);
+  else if(FLAGS_conv_mode == 1)
+	  Caffe::set_conv_mode(Caffe::LOWERED_SPARSE);
+  else if(FLAGS_conv_mode == 2)
+	  Caffe::set_conv_mode(Caffe::SCONV);
+  else printf("ERROR: conv_mode not supported\n");
+
   // Instantiate the caffe net.
   Net<float> caffe_net(FLAGS_model, caffe::TEST, FLAGS_level, &stages);
   caffe_net.CopyTrainedLayersFrom(FLAGS_weights);
