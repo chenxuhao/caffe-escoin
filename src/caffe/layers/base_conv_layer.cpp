@@ -62,7 +62,7 @@ void BaseConvolutionLayer<Dtype>::WeightAlign() {
 	const int weight_offset = this->blobs_[0]->count()/group_;
 	const int row_offset = this->blobs_[0]->shape(0)/group_ + 1;
 
-	int height, width, pad_h, pad_w, input_padded_len, msg;
+	int height = 0, width = 0, pad_h = 0, pad_w = 0, input_padded_len = 0, msg = 0;
 	if(Caffe::conv_mode() == Caffe::SCONV) {
 		height = conv_input_shape_.cpu_data()[1];
 		width = conv_input_shape_.cpu_data()[2];
@@ -533,9 +533,13 @@ void BaseConvolutionLayer<Dtype>::forward_cpu_gemm(const Dtype* input,
 	const Dtype* col_buff = input;
 
 	// cxh
-	int height, width, kernel_h, kernel_w, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w;
-	int input_padded_len, tid, gid, cbegin, cend;
-	Dtype *input_padded;
+	int height = 0, width = 0, kernel_h = 0, kernel_w = 0, pad_h = 0, pad_w = 0;
+	int stride_h = 0, stride_w = 0, dilation_h = 0, dilation_w = 0;
+	int input_padded_len = 0, cbegin = 0, cend = 0;
+	Dtype *input_padded = NULL;
+#ifdef BLOCKED_SCONV
+	int tid = 0, gid = 0;
+#endif
 	// direct sparse convolution
 	if(Caffe::conv_mode() == Caffe::SCONV) {
 		height = conv_input_shape_.cpu_data()[1];
@@ -709,8 +713,9 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 	const Dtype* col_buff = input;
 
 	// cxh: direct sparse convolution
-	int height, width, kernel_h, kernel_w, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w;
-	Dtype *d_input_padded;
+	int height = 0, width = 0, kernel_h = 0, kernel_w = 0, pad_h = 0, pad_w = 0;
+	int stride_h = 0, stride_w = 0, dilation_h = 0, dilation_w = 0;
+	Dtype *d_input_padded = NULL;
 	if(Caffe::conv_mode() == Caffe::SCONV) {
 		height = conv_input_shape_.cpu_data()[1];
 		width = conv_input_shape_.cpu_data()[2];
@@ -745,10 +750,10 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 	// start computation
 	for (int g = 0; g < group_; ++g) {
 		Dtype sparsity = (Dtype)1.0 - (Dtype)nz_num_[g] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
-		LOG(INFO)<<"Sparsity of "<< Layer<Dtype>::layer_param().name() << ": "<< sparsity;
+		//std::cout <<"Sparsity of "<< Layer<Dtype>::layer_param().name() << ": "<< sparsity << std::endl;
 		// cxh: only do this when sparsity > 60%
 		//if(sparsity < (Dtype)0.6) {
-		if(Caffe::conv_mode() == Caffe::SCONV) {
+		if(Caffe::conv_mode() == Caffe::SCONV && sparsity > (Dtype)0.6) {
 			const Dtype *in_temp = d_input_padded + conv_in_channels_/group_ * g * (height + pad_h) * (width + pad_w);
 			const int row_offset = conv_out_channels_ /group_ + 1;
 			const int M = conv_out_channels_ / group_;
@@ -769,13 +774,15 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 				col_buff + col_offset_ * g, (Dtype)0., 
 				output + output_offset_ * g,
 				transposed_output_buffer_.mutable_gpu_data());
-		} else if(Caffe::conv_mode() == Caffe::LOWERED_GEMM) {
+		//} else if(Caffe::conv_mode() == Caffe::LOWERED_GEMM) {
+		} else {
 			//printf("dense weight matrix multi. dense feature map matrix\n");
 			caffe_gpu_gemm<Dtype>(CblasNoTrans, CblasNoTrans, conv_out_channels_ /
 					group_, conv_out_spatial_dim_, kernel_dim_,
 					(Dtype)1., weights + weight_offset_ * g, col_buff + col_offset_ * g,
 					(Dtype)0., output + output_offset_ * g);
-		} else { printf("ERROR: conv_mode not supported\n"); }
+		//} else { printf("ERROR: conv_mode not supported\n"); }
+		}
 	}
 	timer.Stop();
 	compute_time += timer.MicroSeconds()/1000;
