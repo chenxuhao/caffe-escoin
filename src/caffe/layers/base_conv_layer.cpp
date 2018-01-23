@@ -717,8 +717,8 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 	int stride_h = 0, stride_w = 0, dilation_h = 0, dilation_w = 0;
 	Dtype *d_input_padded = NULL;
 	bool is_sparse = false;
-	const Dtype threshold = 0.1;
-	if((Dtype)nz_num_[0] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_) < 0.9);
+	const Dtype threshold = 0.5;
+	if((Dtype)nz_num_[0] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_) < 0.5)
 		is_sparse = true;
 	if(Caffe::conv_mode() == Caffe::SCONV && is_sparse) {
 		height = conv_input_shape_.cpu_data()[1];
