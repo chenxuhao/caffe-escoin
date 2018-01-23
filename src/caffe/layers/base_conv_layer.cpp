@@ -716,7 +716,11 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 	int height = 0, width = 0, kernel_h = 0, kernel_w = 0, pad_h = 0, pad_w = 0;
 	int stride_h = 0, stride_w = 0, dilation_h = 0, dilation_w = 0;
 	Dtype *d_input_padded = NULL;
-	if(Caffe::conv_mode() == Caffe::SCONV) {
+	bool is_sparse = false;
+	const Dtype threshold = 0.1;
+	if((Dtype)nz_num_[0] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_) < 0.9);
+		is_sparse = true;
+	if(Caffe::conv_mode() == Caffe::SCONV && is_sparse) {
 		height = conv_input_shape_.cpu_data()[1];
 		width = conv_input_shape_.cpu_data()[2];
 		kernel_h = kernel_shape_.cpu_data()[0];
@@ -751,9 +755,7 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 	for (int g = 0; g < group_; ++g) {
 		Dtype sparsity = (Dtype)1.0 - (Dtype)nz_num_[g] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
 		//std::cout <<"Sparsity of "<< Layer<Dtype>::layer_param().name() << ": "<< sparsity << std::endl;
-		// cxh: only do this when sparsity > 60%
-		//if(sparsity < (Dtype)0.6) {
-		if(Caffe::conv_mode() == Caffe::SCONV && sparsity > (Dtype)0.6) {
+		if(Caffe::conv_mode() == Caffe::SCONV && sparsity > threshold) {
 			const Dtype *in_temp = d_input_padded + conv_in_channels_/group_ * g * (height + pad_h) * (width + pad_w);
 			const int row_offset = conv_out_channels_ /group_ + 1;
 			const int M = conv_out_channels_ / group_;
@@ -764,7 +766,7 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 				height, width, pad_h, pad_w, stride_h, stride_w, 
 				dilation_h, dilation_w, kernel_h, kernel_w,
 				output + output_offset_ * g, M);
-		} else if(Caffe::conv_mode() == Caffe::LOWERED_SPARSE) {
+		} else if(Caffe::conv_mode() == Caffe::LOWERED_SPARSE && sparsity > threshold) {
 			//printf("sparse weight matrix multi. dense feature map matrix, sparsity=%f\n", sparsity);
 			caffe_gpu_sparse_csrmm(conv_out_channels_ /group_,
 				conv_out_spatial_dim_, kernel_dim_, nz_num_[g], (Dtype)1., 
