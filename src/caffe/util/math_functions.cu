@@ -152,17 +152,16 @@ void caffe_gpu_sparse_dense2csr<double>(const int M, const int N, const double* 
 }
 
 template <typename Dtype>
-__global__ void sconv_kernel(const int *rowptr, const int *colidx, const Dtype *values,
+__global__ void sconv_dilation(const int *rowptr, const int *colidx, const Dtype *values,
 		const Dtype *input_padded, int height, int width, int pad_h, int pad_w,
 		int stride_h, int stride_w, int dilation_h, int dilation_w, int kernel_h, int kernel_w,
 		Dtype *output, int out_channels, const int output_h, const int output_w) {
 	int output_row = blockIdx.x * blockDim.x + threadIdx.x;
 	int output_col = blockIdx.y * blockDim.y + threadIdx.y;
 	int out_channel = blockIdx.z * blockDim.z + threadIdx.z;
-	if (output_row < output_h)
-		if (output_col < output_w)
+	if (output_row < output_h) {
+		if (output_col < output_w) {
 			if(out_channel < out_channels) {
-			//for (int out_channel = 0; out_channel < out_channels; ++out_channel) {
 				Dtype sum = 0;
 				for (int j = rowptr[out_channel]; j < rowptr[out_channel + 1]; ++j) {
 					int col = colidx[j];
@@ -171,14 +170,16 @@ __global__ void sconv_kernel(const int *rowptr, const int *colidx, const Dtype *
 					int in_channel = col/((width + pad_w)*(height + pad_h));
 					int input_row = kernel_row * dilation_h + output_row * stride_h;
 					int input_col = kernel_col * dilation_w + output_col * stride_w;
-					sum += values[j]*input_padded[(in_channel * (height + pad_h) + input_row) * (width + pad_w) + input_col];
+					sum += values[j] * input_padded[(in_channel * (height + pad_h) + input_row) * (width + pad_w) + input_col];
 				}
 				output[(out_channel*output_h + output_row)*output_w + output_col] = sum;
 			}
+		}
+	}
 }
 
 template <typename Dtype>
-__global__ void sconv_kernel_base(const int *rowptr, const int *colidx, const Dtype *values,
+__global__ void sconv_base(const int *rowptr, const int *colidx, const Dtype *values,
 		const Dtype *input_padded, int height, int width, int pad_h, int pad_w,
 		int stride_h, int stride_w, int kernel_h, int kernel_w,
 		Dtype *output, int out_channels, const int output_h, const int output_w) {
@@ -199,9 +200,32 @@ __global__ void sconv_kernel_base(const int *rowptr, const int *colidx, const Dt
 	}
 }
 
+template <typename Dtype>
+__global__ void sconv_relu_base(const int *rowptr, const int *colidx, const Dtype *values,
+		const Dtype *input_padded, int height, int width, int pad_h, int pad_w,
+		int stride_h, int stride_w, int kernel_h, int kernel_w, const Dtype *bias,
+		Dtype *output, int out_channels, const int output_h, const int output_w) {
+	const int output_row = blockIdx.y * blockDim.y + threadIdx.y;
+	const int output_col = blockIdx.x * blockDim.x + threadIdx.x;
+	const int oc = blockIdx.z * blockDim.z + threadIdx.z;
+	if (oc < out_channels) {
+		if (output_row < output_h) {
+			if (output_col < output_w) {
+				const Dtype *in_ptr = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
+				Dtype sum = 0;
+				for (int j = rowptr[oc]; j < rowptr[oc + 1]; ++j) {
+					sum += values[j] * in_ptr[colidx[j]];
+				}
+				output[(oc * output_h + output_row) * output_w + output_col] = max(sum + bias[oc], (Dtype)0);
+			}
+		}
+	}
+}
+
+
 #define BLOCK_SIZE (TILE_H*TILE_W) // 4*4*32
-#define WARP_SIZE 32
-#define VECTOR_SIZE 16
+//#define WARP_SIZE 32
+//#define VECTOR_SIZE 16
 #define TILE_H 16
 #define TILE_W 16
 #define OC_BLOCK (BLOCK_SIZE/TILE_H/TILE_W) // OC_BLOCK should be larger than WARP_SIZE when using WARP_KERNEL
@@ -213,10 +237,9 @@ __global__ void sconv_kernel_base(const int *rowptr, const int *colidx, const Dt
 
 #define TILED_KERNEL
 template <typename Dtype>
-__global__ void sconv_kernel_tiled(const int * __restrict__ rowptr, 
-		const int * __restrict__ colidx, const Dtype * __restrict__ values,
-		const Dtype * __restrict__ input_padded, int height, int width, int pad_h, int pad_w,
-		int stride_h, int stride_w, int kernel_h, int kernel_w,
+__global__ void sconv_tiled(const int * rowptr, const int * colidx, const Dtype * values, 
+		const Dtype * __restrict__ input_padded, int height, int width, 
+		int pad_h, int pad_w, int stride_h, int stride_w, int kernel_h, int kernel_w,
 		Dtype *output, int out_channels, const int output_h, const int output_w) {
 	const int output_row = blockIdx.y * blockDim.y + threadIdx.y;
 	const int output_col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -249,28 +272,26 @@ __global__ void sconv_kernel_tiled(const int * __restrict__ rowptr,
 			__syncthreads();
 		}
 
-		//if (oc < out_channels) {
-			if (output_row < output_h) {
-				if (output_col < output_w) {
-					const Dtype *in_ptr = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
-					//Dtype sum = 0;
-					int end = SHMEM_SIZE;
-					if(k == num-1) end = MIN(end, length-SHMEM_SIZE*k);
-					for (int j = 0; j < end; ++j) {
-						//Dtype weight = values[j];
-						Dtype weight = values_s[j];
-						//Dtype weight = __ldg(values+j);
-						//int pos = colidx[j];
-						int pos = colidx_s[j];
-						//int pos = __ldg(colidx+j);
-						//sum += weight * in_ptr[pos];
-						sum += weight * __ldg(in_ptr+pos);
-					}
-					//output[(oc * output_h + output_row) * output_w + output_col] = sum;
+		if (output_row < output_h) {
+			if (output_col < output_w) {
+				const Dtype *in_ptr = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
+				//Dtype sum = 0;
+				int end = SHMEM_SIZE;
+				if(k == num-1) end = MIN(end, length-SHMEM_SIZE*k);
+				for (int j = 0; j < end; ++j) {
+					//Dtype weight = values[j];
+					Dtype weight = values_s[j];
+					//Dtype weight = __ldg(values+j);
+					//int pos = colidx[j];
+					int pos = colidx_s[j];
+					//int pos = __ldg(colidx+j);
+					//sum += weight * in_ptr[pos];
+					sum += weight * __ldg(in_ptr+pos);
 				}
+				//output[(oc * output_h + output_row) * output_w + output_col] = sum;
 			}
-			__syncthreads();
-		//}
+		}
+		__syncthreads();
 	}
 	if (oc < out_channels) {
 		if (output_row < output_h) {
@@ -281,70 +302,66 @@ __global__ void sconv_kernel_tiled(const int * __restrict__ rowptr,
 	}
 }
 
-//#define WARP_KERNEL
-// the WARPED version uses one thread block to process one output channel 
 template <typename Dtype>
-__global__ void sconv_kernel_warp(const int *rowptr, const int *colidx, const Dtype *values,
-		const Dtype *input_padded, int height, int width, int pad_h, int pad_w,
-		int stride_h, int stride_w, int kernel_h, int kernel_w,
+__global__ void sconv_relu_tiled(const int * rowptr, const int * colidx, 
+		const Dtype * values, const Dtype * __restrict__ input_padded, 
+		int height, int width, int pad_h, int pad_w, int stride_h, 
+		int stride_w, int kernel_h, int kernel_w, const Dtype *bias,
 		Dtype *output, int out_channels, const int output_h, const int output_w) {
-	const int gidx = blockIdx.x * blockDim.x + threadIdx.x; // global x index
-	const int gidy = blockIdx.y * blockDim.y + threadIdx.y;
-	//const int gidz = blockIdx.z * blockDim.z + threadIdx.z;
-	const int lidx = threadIdx.x; // local x index 
-	const int lidy = threadIdx.y;
-	//const int lidz = threadIdx.z;
+	const int output_row = blockIdx.y * blockDim.y + threadIdx.y;
+	const int output_col = blockIdx.x * blockDim.x + threadIdx.x;
+	const int oc = blockIdx.z * blockDim.z + threadIdx.z;
+	__shared__ Dtype values_s[SHMEM_SIZE];
+	__shared__ int colidx_s[SHMEM_SIZE];
+	const int tid = threadIdx.y*TILE_W + threadIdx.x;
 
-	__shared__ Dtype sdata[TILE_H][TILE_W*32+16];
-	//__shared__ int ptrs[TILE_H][TILE_W][2];
-	const int thread_lane = lidx & (WARP_SIZE-1);
-	const int warp_id = gidx / WARP_SIZE;
-	//const int warp_lane = lidx / WARP_SIZE;
-	//const int num_warps = (BLOCK_SIZE / WARP_SIZE) * gridDim.x * gridDim.y;
+	const int row_start = rowptr[oc];
+	const int row_end = rowptr[oc+1];
+	const int length = row_end - row_start;
+	Dtype sum = 0;
+	int num = DIVIDE_INTO(length,SHMEM_SIZE);
+	for(int k = 0; k < num; k++) {
+		int base_addr = row_start + k * SHMEM_SIZE;
+		for (int i = 0; i < ITER; i ++) {
+			int index_s = tid + i * BLOCK_SIZE;
+			int index = base_addr + index_s;
+			if(index >= row_end) {
+				colidx_s[index_s] = 0;
+				values_s[index_s] = 0;
+			} else {
+				colidx_s[index_s] = colidx[index];
+				values_s[index_s] = values[index];
+			}
+			__syncthreads();
+		}
 
-	const int output_row = gidy;
-	const int output_col = warp_id;
-	const int row = lidy;
-	//const int col = warp_lane;
-	const int oc = blockIdx.z;
-	if (oc < out_channels) { 
-	//for(int oc = 0; oc < out_channels; oc ++) {
 		if (output_row < output_h) {
 			if (output_col < output_w) {
-				const Dtype *input_ptr = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
-				//if(thread_lane < 2)
-				//	ptrs[row][col][thread_lane] = rowptr[oc + thread_lane];
-				//__syncthreads();
-				//const int row_start = ptrs[row][col][0]; //rowptr[oc]
-				//const int row_end   = ptrs[row][col][1]; //rowptr[oc+1]
-				const int row_start = rowptr[oc];
-				const int row_end = rowptr[oc+1];
-				Dtype sum = 0;
-				for (int j = row_start + thread_lane; j < row_end; j += WARP_SIZE) {
-					sum += values[j] * input_ptr[colidx[j]];
+				const Dtype *in_ptr = input_padded + output_row * stride_h * (width + pad_w) + output_col * stride_w;
+				int end = SHMEM_SIZE;
+				if(k == num-1) end = MIN(end, length-SHMEM_SIZE*k);
+				for (int j = 0; j < end; ++j) {
+					Dtype weight = values_s[j];
+					int pos = colidx_s[j];
+					sum += weight * __ldg(in_ptr+pos);
 				}
-
-				// reduce local sums to sum (ASSUME: warpsize 32)
-				sdata[row][lidx] = sum; __syncthreads();
-				sdata[row][lidx] = sum = sum + sdata[row][lidx+16]; __syncthreads(); 
-				sdata[row][lidx] = sum = sum + sdata[row][lidx+ 8]; __syncthreads();
-				sdata[row][lidx] = sum = sum + sdata[row][lidx+ 4]; __syncthreads();
-				sdata[row][lidx] = sum = sum + sdata[row][lidx+ 2]; __syncthreads();
-				sdata[row][lidx] = sum = sum + sdata[row][lidx+ 1]; __syncthreads();
-
-				if (thread_lane == 0)
-					output[(oc * output_h + output_row) * output_w + output_col] = sdata[row][lidx];
+			}
+		}
+		__syncthreads();
+	}
+	if (oc < out_channels) {
+		if (output_row < output_h) {
+			if (output_col < output_w) {
+				output[(oc * output_h + output_row) * output_w + output_col] = max(sum + bias[oc], (Dtype)0);
 			}
 		}
 	}
 }
-
+	
 template <typename Dtype>
-void caffe_gpu_sconv(const Dtype *input_padded,
-		const int *rowptr, const int *colidx, const Dtype *values,
-		int height, int width, int pad_h, int pad_w,
-		int stride_h, int stride_w, int dilation_h, int dilation_w,
-		int kernel_h, int kernel_w, Dtype *output, int out_channels) 
+void caffe_gpu_sconv(bool FUSE_RELU, const Dtype *input_padded, const int *rowptr, const int *colidx, 
+	const Dtype *values, const Dtype *bias, int height, int width, int pad_h, int pad_w, int stride_h, int stride_w, 
+	int dilation_h, int dilation_w, int kernel_h, int kernel_w, Dtype *output, int out_channels) 
 {
 	//print_device_info(0);
 	const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
@@ -352,52 +369,52 @@ void caffe_gpu_sconv(const Dtype *input_padded,
 	const int ntiles_h = (output_h - 1) / TILE_H + 1;
 	const int ntiles_w = (output_w - 1) / TILE_W + 1;
 	int nblocks = (out_channels - 1) / OC_BLOCK + 1;
-#ifdef WARP_KERNEL
-	cudaDeviceProp deviceProp;
-	CUDA_CHECK(cudaGetDeviceProperties(&deviceProp, 0));
-	const int nSM = deviceProp.multiProcessorCount;
-	const int max_blocks_per_SM = maximum_residency(sconv_kernel_warp<Dtype>, BLOCK_SIZE, 0);
-	const int max_num_blocks = max_blocks_per_SM * nSM;
-	//nblocks = std::min(max_num_blocks, DIVIDE_INTO(out_channels, (BLOCK_SIZE/WARP_SIZE)));
-	//printf("nSM=%d, max_blocks_per_SM=%d, max_num_blocks=%d, nblocks=%d\n", 
-	//		nSM, max_blocks_per_SM, max_num_blocks, nblocks);
-	dim3 threads(WARP_SIZE*TILE_W, TILE_H);
-	dim3 grid(ntiles_w, ntiles_h, out_channels);
-#else
 	dim3 threads(TILE_W, TILE_H, OC_BLOCK);
 	dim3 grid(ntiles_w, ntiles_h, nblocks);
-#endif
 	//printf("m=out_channels=%d, height=%d, width=%d, ", out_channels, height, width);
 	//printf("output_h=%d, output_w=%d, ", output_h, output_w);
 	//printf("stride_h=%d, stride_w=%d, ", stride_h, stride_w);
 	//printf("pad_h=%d, pad_width=%d\n", pad_h, pad_w);
 	if (dilation_h != 1 || dilation_w != 1) {
-		sconv_kernel<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
-					height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
-					kernel_h, kernel_w, output, out_channels, output_h, output_w);
+		sconv_dilation<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
+			height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
+			kernel_h, kernel_w, output, out_channels, output_h, output_w);
 	} else {
+		if(FUSE_RELU) {
 #ifdef TILED_KERNEL
-		sconv_kernel_tiled<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
-					height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
-					output, out_channels, output_h, output_w);
+			sconv_relu_tiled<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
+				height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
+				bias, output, out_channels, output_h, output_w);
 #else
-		sconv_kernel_base<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
-					height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
-					output, out_channels, output_h, output_w);
+			sconv_relu_base<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
+				height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
+				bias, output, out_channels, output_h, output_w);
 #endif
+
+		} else {
+#ifdef TILED_KERNEL
+			sconv_tiled<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
+				height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
+				output, out_channels, output_h, output_w);
+#else
+			sconv_base<Dtype><<<grid, threads>>>(rowptr, colidx, values, input_padded, 
+				height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
+				output, out_channels, output_h, output_w);
+#endif
+		}
 	}
 	CudaTest("sconv_kernel solving failed");
 }
 
-template void caffe_gpu_sconv<int>(const int *input_padded, const int *rowptr, const int *colidx, const int *values,
-		int height, int width, int pad_h, int pad_w, int stride_h, int stride_w, int dilation_h, int dilation_w, 
-		int kernel_h, int kernel_w, int *output, int out_channels);
-template void caffe_gpu_sconv<float>(const float *input_padded, const int *rowptr, const int *colidx, const float *values,
-		int height, int width, int pad_h, int pad_w, int stride_h, int stride_w, int dilation_h, int dilation_w, 
-		int kernel_h, int kernel_w, float *output, int out_channels);
-template void caffe_gpu_sconv<double>(const double *input_padded, const int *rowptr, const int *colidx, const double *values,
-		int height, int width, int pad_h, int pad_w, int stride_h, int stride_w, int dilation_h, int dilation_w, 
-		int kernel_h, int kernel_w, double *output, int out_channels);
+template void caffe_gpu_sconv<int>(bool FUSE_RELU, const int *input_padded, const int *rowptr, const int *colidx, 
+		const int *values, const int *bias, int height, int width, int pad_h, int pad_w, int stride_h, int stride_w, 
+		int dilation_h, int dilation_w, int kernel_h, int kernel_w, int *output, int out_channels);
+template void caffe_gpu_sconv<float>(bool FUSE_RELU, const float *input_padded, const int *rowptr, const int *colidx, 
+		const float *values, const float *bias, int height, int width, int pad_h, int pad_w, int stride_h, int stride_w, 
+		int dilation_h, int dilation_w, int kernel_h, int kernel_w, float *output, int out_channels);
+template void caffe_gpu_sconv<double>(bool FUSE_RELU, const double *input_padded, const int *rowptr, const int *colidx, 
+		const double *values, const double *bias, int height, int width, int pad_h, int pad_w, int stride_h, int stride_w, 
+		int dilation_h, int dilation_w, int kernel_h, int kernel_w, double *output, int out_channels);
 
 __global__ void stretch_kernel(const int *rowptr, int *colidx, int M,
 		int height, int width, int pad_h, int pad_w, int kernel_h, int kernel_w) {

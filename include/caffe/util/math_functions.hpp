@@ -214,9 +214,9 @@ void caffe_gpu_sparse_dense2csr(const int M, const int N,
 
 // cxh: direct sparse convolution on GPU
 template <typename Dtype>
-void caffe_gpu_sconv(const Dtype *input_padded,
+void caffe_gpu_sconv(bool FUSE_RELU, const Dtype *input_padded,
 	const int *rowptr, const int *colidx, const Dtype *values,
-	int height, int width, int pad_h, int pad_w,
+	const Dtype *bias, int height, int width, int pad_h, int pad_w,
 	int stride_h, int stride_w, int dilation_h, int dilation_w,
 	int kernel_h, int kernel_w, Dtype *output, int out_channels); 
 

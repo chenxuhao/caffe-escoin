@@ -731,7 +731,6 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 		stride_w = stride_.cpu_data()[1];
 		dilation_h = dilation_.cpu_data()[0];
 		dilation_w = dilation_.cpu_data()[1];
-
 		if(pad_h == 0 && pad_w == 0)
 			d_input_padded = (Dtype *)input;
 		else {
@@ -762,10 +761,20 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 			const int *rowptr = nz_weight_index_pointers_.gpu_data() + row_offset * g;
 			const Dtype *values = nz_weight_values_.gpu_data()+ weight_offset_ * g;
 			const int *colidx = nz_weight_indices_.gpu_data()+ weight_offset_ * g;
-			caffe_gpu_sconv<Dtype>(in_temp, rowptr, colidx, values, 
-				height, width, pad_h, pad_w, stride_h, stride_w, 
-				dilation_h, dilation_w, kernel_h, kernel_w,
-				output + output_offset_ * g, M);
+			if (std::string(this->type()) == "ConvolutionReLU") {
+				const Dtype *bias = NULL;
+				if (bias_term_)
+					bias = this->blobs_[1]->gpu_data();
+				assert(bias != NULL);
+				caffe_gpu_sconv<Dtype>(true, in_temp, rowptr, colidx, values, bias,
+					height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w,
+					kernel_h, kernel_w, output + output_offset_ * g, M);
+			//} else if (std::string(this->type()) == "Convolution") {
+			} else {
+				caffe_gpu_sconv<Dtype>(false, in_temp, rowptr, colidx, values, NULL,
+					height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
+					kernel_h, kernel_w, output + output_offset_ * g, M);
+			}
 		} else if(Caffe::conv_mode() == Caffe::LOWERED_SPARSE && sparsity > threshold) {
 			//printf("sparse weight matrix multi. dense feature map matrix, sparsity=%f\n", sparsity);
 			caffe_gpu_sparse_csrmm(conv_out_channels_ /group_,

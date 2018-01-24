@@ -413,6 +413,7 @@ CXXFLAGS += -MMD -MP
 
 # cxh
 CXXFLAGS += -std=c++11 -D__AVX2__
+NVCCFLAGS += -std=c++11
 ifneq (,$(findstring icpc,$(CXX)))
 	CXXFLAGS += -qopenmp -march=core-avx2 -DUSE_ICC
 	LINKFLAGS += -qopenmp

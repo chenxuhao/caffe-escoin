@@ -1,8 +1,8 @@
 #!/bin/bash
 #examples
-#build/tools/caffe.bin test -model models/bvlc_reference_caffenet/train_val.prototxt -weights models/bvlc_reference_caffenet/caffenet_train_iter_640000.caffemodel -gpu 0
-#build/tools/caffe.bin test -model models/bvlc_googlenet/train_val.prototxt -weights models/bvlc_googlenet/gesl_0.686639_0.001_0.00005_ft_0.001_0.0001.caffemodel -gpu 0
-#build/tools/caffe.bin test -model models/resnet/ResNet-50-train-val-gesl.prototxt -weights models/resnet/ResNet-50-model.caffemodel -gpu 0
+#build/tools/caffe.bin test -model models/bvlc_reference_caffenet/train_val.prototxt -weights models/bvlc_reference_caffenet/caffenet_train_iter_640000.caffemodel -gpu 0 -conv_mode 1 -iterations 3
+#build/tools/caffe.bin test -model models/bvlc_googlenet/train_val.prototxt -weights models/bvlc_googlenet/gesl_0.686639_0.001_0.00005_ft_0.001_0.0001.caffemodel -gpu 0 -conv_mode 2 -iterations 9
+#build/tools/caffe.bin test -model models/resnet/ResNet-50-train-val-gesl.prototxt -weights models/resnet/caffenet_train_iter_2000000.caffemodel -gpu 0 -conv_mode 0 -iterations 6
 
 #ROOT=/media/cxh/lycan
 #SCHEME=mkl_csrmm
