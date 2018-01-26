@@ -109,7 +109,7 @@ class Caffe {
   static Caffe& Get();
 
   enum Brew { CPU, GPU };
-  enum ConvMode { LOWERED_GEMM, LOWERED_SPARSE, SCONV };
+  enum ConvMode { LOWERED_GEMM, LOWERED_SPARSE, SCONV, SCONV_PAR };
 
   // This random number generator facade hides boost and CUDA rng
   // implementation from one another (for cross-platform compatibility).

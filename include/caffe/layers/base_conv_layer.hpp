@@ -10,8 +10,8 @@
 
 namespace caffe {
 // cxh
-extern double copy_time;
-extern double compute_time;
+//extern double copy_time;
+//extern double compute_time;
 
 /**
  * @brief Abstract base class that factors out the BLAS code common to
@@ -49,6 +49,10 @@ class BaseConvolutionLayer : public Layer<Dtype> {
 #ifndef CPU_ONLY
   void forward_gpu_gemm(const Dtype* d_input, const Dtype* weights,
       Dtype* output, bool skip_im2col = false);
+  void forward_gpu_sconv(const Dtype* d_input, const Dtype* weights,
+      Dtype* output);
+  void forward_gpu_sconv_par(const Dtype* d_input, const Dtype* weights,
+      Dtype* output);
   void forward_gpu_bias(Dtype* output, const Dtype* bias);
   void backward_gpu_gemm(const Dtype* input, const Dtype* weights,
       Dtype* col_output);
@@ -178,8 +182,8 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   Blob<Dtype> nz_weight_values_;//nonzero elements
   Blob<int> nz_weight_indices_;//index of nonzero
   Blob<int> nz_weight_index_pointers_;//pointer(index) of indices
-  Blob<int> nz_per_row_;//nonzero per row for cusparse
-  vector<int> nz_num_;//the number of nonzero for cusparse
+  Blob<int> nz_per_row_;//nonzero per row for sparse
+  vector<int> nz_num_; //the number of nonzero for sparse
   Blob<Dtype> transposed_output_buffer_;
   Dtype *input_padded_;
   Dtype *d_input_padded_; // GPU pointer
