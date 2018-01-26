@@ -296,6 +296,8 @@ int test() {
 	  Caffe::set_conv_mode(Caffe::LOWERED_SPARSE);
   else if(FLAGS_conv_mode == 2)
 	  Caffe::set_conv_mode(Caffe::SCONV);
+  else if(FLAGS_conv_mode == 3)
+	  Caffe::set_conv_mode(Caffe::SCONV_PAR);
   else printf("ERROR: conv_mode not supported\n");
 
   // Instantiate the caffe net.

@@ -38,7 +38,9 @@ class BaseConvolutionLayer : public Layer<Dtype> {
   // The last argument in forward_cpu_gemm is so that we can skip the im2col if
   // we just called weight_cpu_gemm with the same input.
   void forward_cpu_gemm(const Dtype* input, const Dtype* weights,
-      Dtype* output, int batch_id, bool skip_im2col = false);
+      Dtype* output, bool skip_im2col = false);
+  void forward_cpu_sconv(const Dtype* input, const Dtype* weights,
+      Dtype* output);
   void forward_cpu_bias(Dtype* output, const Dtype* bias);
   void backward_cpu_gemm(const Dtype* input, const Dtype* weights,
       Dtype* output);
