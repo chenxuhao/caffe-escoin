@@ -37,16 +37,16 @@ void caffe_cpu_sparse_dense2csr(const int M, const int N,
 
 // cxh: direct sparse convolution
 template <typename Dtype>
-void caffe_cpu_sconv(const Dtype *input_padded, int in_channels,
+void caffe_cpu_sconv(const Dtype *input, int in_channels,
 		int height, int width, int pad_h, int pad_w,
 		int stride_h, int stride_w, int dilation_h, int dilation_w,
 		const int *rowptr, const int *colidx, const Dtype *values,
 		int kernel_h, int kernel_w, const Dtype *bias, 
-		Dtype *output, int out_channels, int input_padded_len);
+		Dtype *output, int out_channels, int input_len);
 
 // cxh: blocked direct sparse convolution
 template <typename Dtype, bool FUSE_RELU>
-void caffe_cpu_blocked_sconv(const Dtype *input_padded, int in_channels,
+void caffe_cpu_blocked_sconv(const Dtype *input, int in_channels,
 		int height, int width, int pad_h, int pad_w,
 		int stride_h, int stride_w, int dilation_h, int dilation_w,
 		const int *rowptr, const int *colidx, const Dtype *values,
@@ -214,11 +214,11 @@ void caffe_gpu_sparse_dense2csr(const int M, const int N,
 
 // cxh: direct sparse convolution on GPU
 template <typename Dtype>
-void caffe_gpu_sconv(bool FUSE_RELU, const Dtype *input_padded,
+void caffe_gpu_sconv(bool FUSE_RELU, int num, const Dtype *input, int ifmap_size,
 	const int *rowptr, const int *colidx, const Dtype *values,
 	const Dtype *bias, int height, int width, int pad_h, int pad_w,
 	int stride_h, int stride_w, int dilation_h, int dilation_w,
-	int kernel_h, int kernel_w, Dtype *output, int out_channels); 
+	int kernel_h, int kernel_w, Dtype *output, int num_oc); 
 
 // cxh: strech the input vector for direct sconv
 void caffe_gpu_stretch(const int *rowptr, int *colidx, int M, 

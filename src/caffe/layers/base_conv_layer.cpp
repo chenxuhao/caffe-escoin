@@ -753,7 +753,7 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv(const Dtype* input, const Dt
 	}
 	int height = 0, width = 0, kernel_h = 0, kernel_w = 0, pad_h = 0, pad_w = 0;
 	int stride_h = 0, stride_w = 0, dilation_h = 0, dilation_w = 0;
-	Dtype *d_input_padded = NULL;
+	Dtype *d_input = NULL;
 	height = conv_input_shape_.cpu_data()[1];
 	width = conv_input_shape_.cpu_data()[2];
 	kernel_h = kernel_shape_.cpu_data()[0];
@@ -765,18 +765,19 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv(const Dtype* input, const Dt
 	dilation_h = dilation_.cpu_data()[0];
 	dilation_w = dilation_.cpu_data()[1];
 	if(pad_h == 0 && pad_w == 0)
-		d_input_padded = (Dtype *)input;
+		d_input = (Dtype *)input;
 	else {
-		d_input_padded = d_input_padded_;
-		copy_input_data<Dtype>(d_input_padded, input, conv_in_channels_, height, width, pad_h, pad_w);
+		d_input = d_input_padded_;
+		copy_input_data<Dtype>(d_input, input, conv_in_channels_, height, width, pad_h, pad_w);
 	}
 
 	// start computation
 	for (int g = 0; g < group_; ++g) {
-		const Dtype *in_temp = d_input_padded + conv_in_channels_ / group_ * g * (height + pad_h) * (width + pad_w);
-		const int row_offset = conv_out_channels_ / group_ + 1;
-		const int M = conv_out_channels_ / group_;
-		const int *rowptr = nz_weight_index_pointers_.gpu_data() + row_offset * g;
+		const int num_ic = conv_in_channels_ / group_;
+		const int num_oc = conv_out_channels_ / group_;
+		const int ifmap_size = num_ic * (height + pad_h) * (width + pad_w);
+		const Dtype *input = d_input + g * ifmap_size;
+		const int *rowptr = nz_weight_index_pointers_.gpu_data() + (num_oc + 1) * g;
 		const Dtype *values = nz_weight_values_.gpu_data()+ weight_offset_ * g;
 		const int *colidx = nz_weight_indices_.gpu_data()+ weight_offset_ * g;
 		if (std::string(this->type()) == "ConvolutionReLU") {
@@ -784,22 +785,22 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv(const Dtype* input, const Dt
 			if (bias_term_)
 				bias = this->blobs_[1]->gpu_data();
 			assert(bias != NULL);
-			caffe_gpu_sconv<Dtype>(true, in_temp, rowptr, colidx, values, bias,
+			caffe_gpu_sconv<Dtype>(true, 1, input, ifmap_size, rowptr, colidx, values, bias,
 				height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w,
-				kernel_h, kernel_w, output + output_offset_ * g, M);
+				kernel_h, kernel_w, output + output_offset_ * g, num_oc);
 			//} else if (std::string(this->type()) == "Convolution") {
 		} else {
-			caffe_gpu_sconv<Dtype>(false, in_temp, rowptr, colidx, values, NULL,
+			caffe_gpu_sconv<Dtype>(false, 1, input, ifmap_size, rowptr, colidx, values, NULL,
 				height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
-				kernel_h, kernel_w, output + output_offset_ * g, M);
+				kernel_h, kernel_w, output + output_offset_ * g, num_oc);
 		}
 	}
 }
 
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_gpu_sconv_par(const Dtype* input, const Dtype* weights, Dtype* output) {
-	//if((Dtype)nz_num_[0] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_) > 0.5) {
-	if(1) {
+	if((Dtype)nz_num_[0] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_) > 0.5) {
+	//if(1) {
 		for (int n = 0; n < num_; ++n) {
 			forward_gpu_gemm(input + n * bottom_dim_, weights, output + n * top_dim_);
 			if (bias_term_) {
@@ -811,7 +812,7 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv_par(const Dtype* input, cons
 	}
 	int height = 0, width = 0, kernel_h = 0, kernel_w = 0, pad_h = 0, pad_w = 0;
 	int stride_h = 0, stride_w = 0, dilation_h = 0, dilation_w = 0;
-	Dtype *d_input_padded = NULL;
+	Dtype *d_input = NULL;
 	height = conv_input_shape_.cpu_data()[1];
 	width = conv_input_shape_.cpu_data()[2];
 	kernel_h = kernel_shape_.cpu_data()[0];
@@ -823,25 +824,32 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv_par(const Dtype* input, cons
 	dilation_h = dilation_.cpu_data()[0];
 	dilation_w = dilation_.cpu_data()[1];
 	if(pad_h == 0 && pad_w == 0)
-		d_input_padded = (Dtype *)input;
+		d_input = (Dtype *)input;
 	else {
-		d_input_padded = d_input_padded_;
+		d_input = d_input_padded_;
 		for (int n = 0; n < num_; ++n)
-			copy_input_data<Dtype>(d_input_padded + n * conv_in_channels_ * (height + pad_h) * (width + pad_w), 
+			copy_input_data<Dtype>(d_input + n * conv_in_channels_ * (height + pad_h) * (width + pad_w), 
 				input + n * bottom_dim_, conv_in_channels_, height, width, pad_h, pad_w);
 	}
 
 	// start computation
 	for (int g = 0; g < group_; ++g) {
-		const Dtype *in_temp = d_input_padded + conv_in_channels_ / group_ * g * (height + pad_h) * (width + pad_w);
-		const int row_offset = conv_out_channels_ / group_ + 1;
-		const int M = conv_out_channels_ / group_;
-		const int *rowptr = nz_weight_index_pointers_.gpu_data() + row_offset * g;
-		const Dtype *values = nz_weight_values_.gpu_data()+ weight_offset_ * g;
+		const int num_ic = conv_in_channels_ / group_;
+		const int num_oc = conv_out_channels_ / group_;
+		const int ifmap_size = num_ic * (height + pad_h) * (width + pad_w);
+		const Dtype *input = d_input + g * ifmap_size;
+		const int *rowptr = nz_weight_index_pointers_.gpu_data() + (num_oc + 1) * g;
 		const int *colidx = nz_weight_indices_.gpu_data()+ weight_offset_ * g;
-		caffe_gpu_sconv<Dtype>(false, in_temp, rowptr, colidx, values, NULL,
-			height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
-			kernel_h, kernel_w, output + output_offset_ * g, M);
+		const Dtype *values = nz_weight_values_.gpu_data()+ weight_offset_ * g;
+		caffe_gpu_sconv<Dtype>(false, num_, input, ifmap_size, rowptr, colidx, values,
+			NULL, height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
+			kernel_h, kernel_w, output + output_offset_ * g, num_oc);
+	}
+	for (int n = 0; n < num_; ++n) {
+		if (bias_term_) {
+			const Dtype* bias = this->blobs_[1]->gpu_data();
+			forward_gpu_bias(output + n * top_dim_, bias);
+		}
 	}
 }
 
