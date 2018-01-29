@@ -15,7 +15,7 @@ void ConvolutionReLULayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom
     const Dtype* bottom_data = bottom[i]->gpu_data();
     Dtype* top_data = top[i]->mutable_gpu_data();
     if(Caffe::conv_mode() == Caffe::SCONV_PAR) {
-
+      printf("ERROR: not implemented yet\n");
     } else if(Caffe::conv_mode() == Caffe::SCONV) {
 	  for (int n = 0; n < this->num_; ++n) {
         this->forward_gpu_sconv(bottom_data + n * this->bottom_dim_, weight,
