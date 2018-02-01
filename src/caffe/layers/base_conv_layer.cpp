@@ -751,19 +751,17 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv(const Dtype* input, const Dt
 		forward_gpu_gemm(input, weights, output);
 		return;
 	}
-	int height = 0, width = 0, kernel_h = 0, kernel_w = 0, pad_h = 0, pad_w = 0;
-	int stride_h = 0, stride_w = 0, dilation_h = 0, dilation_w = 0;
 	Dtype *d_input = NULL;
-	height = conv_input_shape_.cpu_data()[1];
-	width = conv_input_shape_.cpu_data()[2];
-	kernel_h = kernel_shape_.cpu_data()[0];
-	kernel_w = kernel_shape_.cpu_data()[1];
-	pad_h = pad_.cpu_data()[0];
-	pad_w = pad_.cpu_data()[1];
-	stride_h = stride_.cpu_data()[0];
-	stride_w = stride_.cpu_data()[1];
-	dilation_h = dilation_.cpu_data()[0];
-	dilation_w = dilation_.cpu_data()[1];
+	int height = conv_input_shape_.cpu_data()[1];
+	int width = conv_input_shape_.cpu_data()[2];
+	int kernel_h = kernel_shape_.cpu_data()[0];
+	int kernel_w = kernel_shape_.cpu_data()[1];
+	int pad_h = pad_.cpu_data()[0];
+	int pad_w = pad_.cpu_data()[1];
+	int stride_h = stride_.cpu_data()[0];
+	int stride_w = stride_.cpu_data()[1];
+	int dilation_h = dilation_.cpu_data()[0];
+	int dilation_w = dilation_.cpu_data()[1];
 	if(pad_h == 0 && pad_w == 0)
 		d_input = (Dtype *)input;
 	else {
@@ -780,17 +778,17 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv(const Dtype* input, const Dt
 		const int *rowptr = nz_weight_index_pointers_.gpu_data() + (num_oc + 1) * g;
 		const int *colidx = nz_weight_indices_.gpu_data()+ weight_offset_ * g;
 		const Dtype *values = nz_weight_values_.gpu_data()+ weight_offset_ * g;
+		const Dtype *bias = NULL;
+		if (bias_term_)
+			bias = this->blobs_[1]->gpu_data();
+		assert(bias != NULL);
 		if (std::string(this->type()) == "ConvolutionReLU") {
-			const Dtype *bias = NULL;
-			if (bias_term_)
-				bias = this->blobs_[1]->gpu_data();
-			assert(bias != NULL);
 			caffe_gpu_sconv<Dtype>(true, 1, input, ifmap_size, rowptr, colidx, values, bias,
 				height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w,
 				kernel_h, kernel_w, output + output_offset_ * g, num_oc);
-			//} else if (std::string(this->type()) == "Convolution") {
+		//} else if (std::string(this->type()) == "Convolution") {
 		} else {
-			caffe_gpu_sconv<Dtype>(false, 1, input, ifmap_size, rowptr, colidx, values, NULL,
+			caffe_gpu_sconv<Dtype>(false, 1, input, ifmap_size, rowptr, colidx, values, bias,
 				height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
 				kernel_h, kernel_w, output + output_offset_ * g, num_oc);
 		}
@@ -799,29 +797,27 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv(const Dtype* input, const Dt
 
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_gpu_sconv_par(const Dtype* input, const Dtype* weights, Dtype* output) {
+	const Dtype* bias = NULL;
+	if (bias_term_)
+		bias = this->blobs_[1]->gpu_data();
 	if((Dtype)nz_num_[0] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_) > 0.5) {
 		for (int n = 0; n < num_; ++n) {
 			forward_gpu_gemm(input + n * bottom_dim_, weights, output + n * top_dim_);
-			if (bias_term_) {
-				const Dtype* bias = this->blobs_[1]->gpu_data();
-				forward_gpu_bias(output + n * top_dim_, bias);
-			}
+			if (bias_term_) forward_gpu_bias(output + n * top_dim_, bias);
 		}
     	return;
 	}
-	int height = 0, width = 0, kernel_h = 0, kernel_w = 0, pad_h = 0, pad_w = 0;
-	int stride_h = 0, stride_w = 0, dilation_h = 0, dilation_w = 0;
 	Dtype *d_input = NULL;
-	height = conv_input_shape_.cpu_data()[1];
-	width = conv_input_shape_.cpu_data()[2];
-	kernel_h = kernel_shape_.cpu_data()[0];
-	kernel_w = kernel_shape_.cpu_data()[1];
-	pad_h = pad_.cpu_data()[0];
-	pad_w = pad_.cpu_data()[1];
-	stride_h = stride_.cpu_data()[0];
-	stride_w = stride_.cpu_data()[1];
-	dilation_h = dilation_.cpu_data()[0];
-	dilation_w = dilation_.cpu_data()[1];
+	int height = conv_input_shape_.cpu_data()[1];
+	int width = conv_input_shape_.cpu_data()[2];
+	int kernel_h = kernel_shape_.cpu_data()[0];
+	int kernel_w = kernel_shape_.cpu_data()[1];
+	int pad_h = pad_.cpu_data()[0];
+	int pad_w = pad_.cpu_data()[1];
+	int stride_h = stride_.cpu_data()[0];
+	int stride_w = stride_.cpu_data()[1];
+	int dilation_h = dilation_.cpu_data()[0];
+	int dilation_w = dilation_.cpu_data()[1];
 	if(pad_h == 0 && pad_w == 0)
 		d_input = (Dtype *)input;
 	else {
@@ -830,10 +826,6 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv_par(const Dtype* input, cons
 			copy_input_data<Dtype>(d_input + n * conv_in_channels_ * (height + pad_h) * (width + pad_w), 
 				input + n * bottom_dim_, conv_in_channels_, height, width, pad_h, pad_w);
 	}
-
-	const Dtype* bias = NULL;
-	if (bias_term_)
-		this->blobs_[1]->gpu_data();
 	const int num_ic = conv_in_channels_ / group_;
 	const int num_oc = conv_out_channels_ / group_;
 	const int ifmap_size = num_ic * (height + pad_h) * (width + pad_w);
@@ -848,12 +840,9 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv_par(const Dtype* input, cons
 			bias, height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
 			kernel_h, kernel_w, output + output_offset_ * g, num_oc);
 	}
-	//for (int n = 0; n < num_; ++n) {
-	//	if (bias_term_) {
-	//		const Dtype* bias = this->blobs_[1]->gpu_data();
-	//		forward_gpu_bias(output + n * top_dim_, bias);
-	//	}
-	//}
+	for (int n = 0; n < num_; ++n) {
+		if (bias_term_) forward_gpu_bias(output + n * top_dim_, bias);
+	}
 }
 
 template <typename Dtype>

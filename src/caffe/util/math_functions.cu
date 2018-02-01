@@ -212,11 +212,11 @@ __global__ void sconv_relu_base(const int *rowptr, const int *colidx, const Dtyp
 		if (output_row < output_h) {
 			if (output_col < output_w) {
 				const Dtype *in_ptr = input + output_row * stride_h * (width + pad_w) + output_col * stride_w;
-				Dtype sum = 0;
+				Dtype sum = bias[oc];
 				for (int j = rowptr[oc]; j < rowptr[oc + 1]; ++j) {
 					sum += values[j] * in_ptr[colidx[j]];
 				}
-				output[(oc * output_h + output_row) * output_w + output_col] = max(sum + bias[oc], (Dtype)0);
+				output[(oc * output_h + output_row) * output_w + output_col] = max(sum, (Dtype)0);
 			}
 		}
 	}
@@ -248,46 +248,44 @@ __global__ void sconv_batch_base(const int *rowptr, const int *colidx, const Dty
 }
 
 
-#define BLOCK_SIZE (TILE_H*TILE_W) // 4*4*32
-//#define WARP_SIZE 32
-//#define VECTOR_SIZE 16
-#define TILE_H 16
-#define TILE_W 16
+#define BLOCK_SIZE 256 // 4*4*32
+#define WARP_SIZE 32
+#define VLEN 32
 #define OC_BLOCK 1
-#define FMAP_BLOCK 2
-//#define OC_BLOCK 32
 #define DIVIDE_INTO(x,y) ((x + y - 1)/y)
 #define MIN(x,y) ((x < y)? x : y)
 #define SHMEM_SIZE 1024
 #define ITER (SHMEM_SIZE/BLOCK_SIZE)
+#define REG_BLOCK_SIZE 32 // number of registers per warp
+#define REG_BLOCK_H 4
+#define REG_BLOCK_W 1
+#define COARSEN 4
 
-template <typename Dtype>
-__global__ void sconv_tiled(const int * rowptr, const int * colidx, const Dtype * values, 
+template <typename Dtype, int TILE_H, int TILE_W>
+__global__ void sconv_shm(const int * rowptr, const int * colidx, const Dtype * values, 
 		const Dtype * __restrict__ input, const int height, const int width, const int pad_h, const int pad_w, 
 		const int stride_h, const int stride_w, const int kernel_h, const int kernel_w, const Dtype *bias,
 		Dtype *output, const int num_oc, const int output_h, const int output_w) {
 	const int output_row = blockIdx.y * blockDim.y + threadIdx.y;
 	const int output_col = blockIdx.x * blockDim.x + threadIdx.x;
-	const int oc = blockIdx.z * blockDim.z + threadIdx.z;
+	const int oc_id = blockIdx.z * blockDim.z + threadIdx.z;
 	__shared__ Dtype values_s[SHMEM_SIZE];
 	__shared__ int colidx_s[SHMEM_SIZE];
-	const int tid = threadIdx.y*TILE_W + threadIdx.x;
+	const int tid = threadIdx.y * TILE_W + threadIdx.x;
 
+	for(int oc = oc_id; oc < num_oc; oc += gridDim.z) {
 	const int row_start = rowptr[oc];
 	const int row_end = rowptr[oc+1];
-	//int row_start = __ldg(rowptr+oc);
-	//int row_end = __ldg(rowptr+oc+1);
 	const int length = row_end - row_start;
+	const int BLK_SIZE = TILE_H * TILE_W;
 	Dtype sum = 0;
-	int num = DIVIDE_INTO(length,SHMEM_SIZE);
-	//if(output_row == 0 && output_col == 0 && oc == 0) printf("num=%d\n", num);
-	for(int k = 0; k < num; k++) {
-		int base_addr = row_start + k * SHMEM_SIZE;
-		for (int i = 0; i < ITER; i ++) {
-			int index_s = tid + i * BLOCK_SIZE;
+	//Dtype sum = bias[oc];
+	for(int i = 0; i < length; i += SHMEM_SIZE) {
+		int base_addr = row_start + i;
+		for (int j = 0; j < SHMEM_SIZE; j += BLK_SIZE) {
+			int index_s = tid + j;
 			int index = base_addr + index_s;
 			if(index >= row_end) {
-				//break;
 				colidx_s[index_s] = 0;
 				values_s[index_s] = 0;
 			} else {
@@ -300,25 +298,18 @@ __global__ void sconv_tiled(const int * rowptr, const int * colidx, const Dtype 
 		if (output_row < output_h) {
 			if (output_col < output_w) {
 				const Dtype *in_ptr = input + output_row * stride_h * (width + pad_w) + output_col * stride_w;
-				//Dtype sum = 0;
-				int end = SHMEM_SIZE;
-				if(k == num-1) end = MIN(end, length-SHMEM_SIZE*k);
-				for (int j = 0; j < end; ++j) {
-					//Dtype weight = values[j];
-					Dtype weight = values_s[j];
-					//Dtype weight = __ldg(values+j);
-					//int pos = colidx[j];
-					int pos = colidx_s[j];
-					//int pos = __ldg(colidx+j);
-					//sum += weight * in_ptr[pos];
+				int end = MIN(SHMEM_SIZE, length - i);
+				for (int off = 0; off < end; ++off) {
+					Dtype weight = values_s[off];
+					int pos = colidx_s[off];
 					sum += weight * __ldg(in_ptr+pos);
 				}
-				//output[(oc * output_h + output_row) * output_w + output_col] = sum;
 			}
 		}
 		__syncthreads();
 	}
-	if (oc < num_oc) {
+
+	//if (oc < num_oc) {
 		if (output_row < output_h) {
 			if (output_col < output_w) {
 				output[(oc * output_h + output_row) * output_w + output_col] = sum;
@@ -327,7 +318,90 @@ __global__ void sconv_tiled(const int * rowptr, const int * colidx, const Dtype 
 	}
 }
 
-template <typename Dtype>
+template <typename Dtype, int TILE_H, int TILE_W, int WIDTH, int K, int PAD = (K - 1) / 2>
+__global__ void sconv_coarsened(const int * rowptr, const int * colidx, const Dtype * values, 
+		const Dtype * __restrict__ input, const int height, const int width, const int pad_h, const int pad_w, 
+		const int stride_h, const int stride_w, const int kernel_h, const int kernel_w, const Dtype *bias,
+		Dtype *output, const int num_oc, const int output_h, const int output_w) {
+	//assert(PAD <= (K - 1) / 2);
+	//const int WOUT = WIDTH + 2 * PAD - K + 1;
+	//const int ALIGNED_W = (WOUT + 16 - 1) / 16 * 16;
+	//const int REG_BLOCK_W = (WOUT + VLEN - 1) / VLEN;
+	//assert(REG_BLOCK_W <= REG_BLOCK_SIZE);
+	//const int REG_BLOCK_H = 4;//WOUT < REG_BLOCK_SIZE/REG_BLOCK_W ? WOUT : REG_BLOCK_SIZE/REG_BLOCK_W;
+	// WIDTH = 13 (AlexNet conv3-5), AVX2 : REG_BLOCK_W = 2, REG_BLOCK_H = 7, ALIGNED_W = 16
+	// WIDTH = 56 (GoogLeNet), AVX2 : REG_BLOCK_W = 7, REG_BLOCK_H = 2, ALIGNED_W = 64
+
+	const int xid = blockIdx.x * blockDim.x + threadIdx.x;
+	const int yid = blockIdx.y * blockDim.y + threadIdx.y;
+	const int zid = blockIdx.z * blockDim.z + threadIdx.z;
+	const int output_row = yid  * COARSEN;
+	const int output_col = xid;
+	const int oc = zid;
+	__shared__ Dtype values_s[SHMEM_SIZE];
+	__shared__ int colidx_s[SHMEM_SIZE];
+	const int tid = threadIdx.y * TILE_W + threadIdx.x;
+	const int BLK_SIZE = TILE_H * TILE_W;
+
+	const int row_start = rowptr[oc];
+	const int row_end = rowptr[oc+1];
+	//int row_start = __ldg(rowptr+oc);
+	//int row_end = __ldg(rowptr+oc+1);
+	const int length = row_end - row_start;
+
+	Dtype sum[REG_BLOCK_H][REG_BLOCK_W];
+	for (int h = 0; h < REG_BLOCK_H; ++h) {
+		for (int w = 0; w < REG_BLOCK_W; ++w) {
+			//sum[h][w] = bias[oc];
+			sum[h][w] = 0;
+		}
+	}
+
+	for(int i = 0; i < length; i += SHMEM_SIZE) {
+		int base_addr = row_start + i;
+		for (int j = 0; j < SHMEM_SIZE; j += BLK_SIZE) {
+			int index_s = tid + j;
+			int index = base_addr + index_s;
+			if(index >= row_end) {
+				colidx_s[index_s] = 0;
+				values_s[index_s] = 0;
+			} else {
+				colidx_s[index_s] = colidx[index];
+				values_s[index_s] = values[index];
+			}
+			__syncthreads();
+		}
+
+		const Dtype *in_ptr = input + output_row * stride_h * (width + pad_w) + output_col * stride_w;
+		int end = MIN(SHMEM_SIZE, length - i);
+		for (int off = 0; off < end; ++off) {
+			Dtype weight = values_s[off];
+			int pos = colidx_s[off];
+			for (int h = 0; h < REG_BLOCK_H; ++h) {
+				for (int w = 0; w < REG_BLOCK_W; ++w) {
+					if (output_row + h < output_h) {
+						if (output_col + w < output_w) {
+							sum[h][w] += weight * __ldg(in_ptr + pos + h * stride_h * (width + pad_w) + w * stride_w);
+						}
+					}
+				}
+			}
+		}
+		__syncthreads();
+	}
+
+	for (int h = 0; h < REG_BLOCK_H; ++h) {
+		for (int w = 0; w < REG_BLOCK_W; ++w) {
+			if (output_row + h < output_h) {
+				if (output_col + w < output_w) {
+					output[(oc * output_h + (output_row + h)) * output_w + output_col + w] = sum[h][w];
+				}
+			}
+		}
+	}
+}
+
+template <typename Dtype, int TILE_H, int TILE_W>
 __global__ void sconv_relu_tiled(const int * rowptr, const int * colidx, 
 		const Dtype * values, const Dtype * __restrict__ input, 
 		int height, int width, int pad_h, int pad_w, int stride_h, 
@@ -338,17 +412,17 @@ __global__ void sconv_relu_tiled(const int * rowptr, const int * colidx,
 	const int oc = blockIdx.z * blockDim.z + threadIdx.z;
 	__shared__ Dtype values_s[SHMEM_SIZE];
 	__shared__ int colidx_s[SHMEM_SIZE];
-	const int tid = threadIdx.y*TILE_W + threadIdx.x;
+	const int tid = threadIdx.y * TILE_W + threadIdx.x;
+	const int BLK_SIZE = TILE_H * TILE_W;
 
 	const int row_start = rowptr[oc];
 	const int row_end = rowptr[oc+1];
 	const int length = row_end - row_start;
-	Dtype sum = 0;
-	int num = DIVIDE_INTO(length,SHMEM_SIZE);
-	for(int k = 0; k < num; k++) {
-		int base_addr = row_start + k * SHMEM_SIZE;
-		for (int i = 0; i < ITER; i ++) {
-			int index_s = tid + i * BLOCK_SIZE;
+	Dtype sum = bias[oc];
+	for(int i = 0; i < length; i += SHMEM_SIZE) {
+		int base_addr = row_start + i;
+		for (int j = 0; j < SHMEM_SIZE; j += BLK_SIZE) {
+			int index_s = tid + j;
 			int index = base_addr + index_s;
 			if(index >= row_end) {
 				colidx_s[index_s] = 0;
@@ -363,11 +437,10 @@ __global__ void sconv_relu_tiled(const int * rowptr, const int * colidx,
 		if (output_row < output_h) {
 			if (output_col < output_w) {
 				const Dtype *in_ptr = input + output_row * stride_h * (width + pad_w) + output_col * stride_w;
-				int end = SHMEM_SIZE;
-				if(k == num-1) end = MIN(end, length-SHMEM_SIZE*k);
-				for (int j = 0; j < end; ++j) {
-					Dtype weight = values_s[j];
-					int pos = colidx_s[j];
+				int end = MIN(SHMEM_SIZE, length - i);
+				for (int off = 0; off < end; ++ off) {
+					Dtype weight = values_s[off];
+					int pos = colidx_s[off];
 					sum += weight * __ldg(in_ptr+pos);
 				}
 			}
@@ -377,14 +450,14 @@ __global__ void sconv_relu_tiled(const int * rowptr, const int * colidx,
 	if (oc < num_oc) {
 		if (output_row < output_h) {
 			if (output_col < output_w) {
-				output[(oc * output_h + output_row) * output_w + output_col] = max(sum + bias[oc], (Dtype)0);
+				output[(oc * output_h + output_row) * output_w + output_col] = max(sum, (Dtype)0);
 			}
 		}
 	}
 }
 
-template <typename Dtype>
-__global__ void sconv_batch_tiled(const int * rowptr, const int * colidx, const Dtype * values, 
+template <typename Dtype, int FMAP_BLOCK, int TILE_H, int TILE_W, int WIDTH, int K, int PAD = (K - 1) / 2>
+__global__ void sconv_batch_tiled1(const int * rowptr, const int * colidx, const Dtype * values, 
 		const Dtype * __restrict__ input, const int ifmap_size, const int height, const int width, 
 		const int pad_h, const int pad_w, const int stride_h, const int stride_w, const int kernel_h, const int kernel_w,
 		const Dtype *bias, Dtype *output, const int num_oc, const int output_h, const int output_w) {
@@ -397,19 +470,20 @@ __global__ void sconv_batch_tiled(const int * rowptr, const int * colidx, const 
 	
 	__shared__ Dtype values_s[SHMEM_SIZE];
 	__shared__ int colidx_s[SHMEM_SIZE];
-	const int tid = threadIdx.y*TILE_W + threadIdx.x;
+	const int tid = threadIdx.y * TILE_W + threadIdx.x;
+	const int BLK_SIZE = TILE_H * TILE_W;
 
 	const int row_start = rowptr[oc];
 	const int row_end = rowptr[oc+1];
 	const int length = row_end - row_start;
 	Dtype sum[FMAP_BLOCK];
 	for (int i=0; i < FMAP_BLOCK; i++)
+		//sum[i] = bias[oc];
 		sum[i] = 0;
-	int num = DIVIDE_INTO(length,SHMEM_SIZE);
-	for(int i = 0; i < num; i ++) {
-		int base_addr = row_start + i * SHMEM_SIZE;
-		for (int j = 0; j < ITER; j ++) {
-			int index_s = tid + j * BLOCK_SIZE;
+	for(int i = 0; i < length; i += SHMEM_SIZE) {
+		int base_addr = row_start + i;
+		for (int j = 0; j < SHMEM_SIZE; j += BLK_SIZE) {
+			int index_s = tid + j;
 			int index = base_addr + index_s;
 			if(index >= row_end) {
 				colidx_s[index_s] = 0;
@@ -424,8 +498,7 @@ __global__ void sconv_batch_tiled(const int * rowptr, const int * colidx, const 
 			if (output_col < output_w) {
 				const Dtype *ifmap = input + (fmap_id * FMAP_BLOCK) * ifmap_size;
 				const Dtype *in_ptr = ifmap + output_row * stride_h * (width + pad_w) + output_col * stride_w;
-				int end = SHMEM_SIZE;
-				if(i == num-1) end = MIN(end, length - SHMEM_SIZE * i);
+				int end = MIN(SHMEM_SIZE, length - i);
 				for (int offset = 0; offset < end; ++ offset) { 
 					Dtype weight = values_s[offset];
 					int pos = colidx_s[offset];
@@ -441,11 +514,73 @@ __global__ void sconv_batch_tiled(const int * rowptr, const int * colidx, const 
 		if (oc < num_oc) {
 			if (output_row < output_h) {
 				if (output_col < output_w) {
-					if(bias == NULL)
 						output[(fmap_id * FMAP_BLOCK + k) * ofmap_size + (oc * output_h + output_row) * output_w + output_col] = sum[k];
-					else
-						output[(fmap_id * FMAP_BLOCK + k) * ofmap_size + (oc * output_h + output_row) * output_w + output_col] = sum[k] + bias[oc];
 				}
+			}
+		}
+	}
+}
+
+template <typename Dtype, int FMAP_BLOCK, int TILE_H, int TILE_W, int WIDTH, int K, int PAD = (K - 1) / 2>
+__global__ void sconv_batch_tiled(const int * rowptr, const int * colidx, const Dtype * values, 
+		const Dtype * __restrict__ input, const int ifmap_size, const int height, const int width, 
+		const int pad_h, const int pad_w, const int stride_h, const int stride_w, const int kernel_h, const int kernel_w,
+		const Dtype *bias, Dtype *output, const int num_oc, const int output_h, const int output_w) {
+	const int output_row = blockIdx.y * blockDim.y + threadIdx.y;
+	const int output_col = blockIdx.x * blockDim.x + threadIdx.x;
+	const int zid = blockIdx.z * blockDim.z + threadIdx.z;
+	const int oc = zid % num_oc; // the output channel id
+	const int fmap_id = zid / num_oc; // the feature map id
+	const int ofmap_size = output_h * output_w * num_oc;
+	
+	__shared__ Dtype values_s[SHMEM_SIZE];
+	__shared__ int colidx_s[SHMEM_SIZE];
+	const int tid = threadIdx.y * TILE_W + threadIdx.x;
+	const int BLK_SIZE = TILE_H * TILE_W;
+
+	const int row_start = rowptr[oc];
+	const int row_end = rowptr[oc+1];
+	const int length = row_end - row_start;
+	
+	Dtype sum[FMAP_BLOCK];
+	for (int i=0; i < FMAP_BLOCK; i++)
+		//sum[i] = bias[oc];
+		sum[i] = 0;
+	for(int i = 0; i < length; i += SHMEM_SIZE) {
+		int base_addr = row_start + i;
+		for (int j = 0; j < SHMEM_SIZE; j += BLK_SIZE) {
+			int index_s = tid + j;
+			int index = base_addr + index_s;
+			if(index >= row_end) {
+				colidx_s[index_s] = 0;
+				values_s[index_s] = 0;
+			} else {
+				colidx_s[index_s] = colidx[index];
+				values_s[index_s] = values[index];
+			}
+			__syncthreads();
+		}
+		for(int k = 0; k < FMAP_BLOCK; k ++) {
+			if (output_row < output_h) {
+				if (output_col < output_w) {
+					const Dtype *ifmap = input + (fmap_id * FMAP_BLOCK) * ifmap_size;
+					const Dtype *in_ptr = ifmap + output_row * stride_h * (width + pad_w) + output_col * stride_w;
+					int end = MIN(SHMEM_SIZE, length - i);
+					for (int offset = 0; offset < end; ++ offset) { 
+						Dtype weight = values_s[offset];
+						int pos = colidx_s[offset];
+						sum[k] += weight * __ldg(in_ptr + pos + k * ifmap_size);
+					}
+				}
+			}
+		}
+		__syncthreads();
+	}
+	for(int k = 0; k < FMAP_BLOCK; k ++) {
+		//if (oc < num_oc) {
+		if (output_row < output_h) {
+			if (output_col < output_w) {
+					output[(fmap_id * FMAP_BLOCK + k) * ofmap_size + (oc * output_h + output_row) * output_w + output_col] = sum[k];
 			}
 		}
 	}
@@ -460,52 +595,99 @@ void caffe_gpu_sconv(bool FUSE_RELU, int num, const Dtype *input, const int ifma
 	//print_device_info(0);
 	const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
 	const int output_w = (width  + 2 * pad_w - (dilation_w * (kernel_w - 1) + 1)) / stride_w + 1;
-	const int ntiles_h = (output_h - 1) / TILE_H + 1;
-	const int ntiles_w = (output_w - 1) / TILE_W + 1;
-	int nblocks = ((num_oc - 1) / OC_BLOCK + 1);
+
+	int TILE_H = 16;
+	int TILE_W = 16;
+	int ntiles_h = (output_h - 1) / TILE_H + 1;
+	int ntiles_w = (output_w - 1) / TILE_W + 1;
+	int nblocks = (num_oc - 1) / OC_BLOCK + 1;
 	if(num != 1)
-		nblocks = (num/FMAP_BLOCK) * ((num_oc - 1) / OC_BLOCK + 1);
-	dim3 threads(TILE_W, TILE_H, OC_BLOCK);
-	dim3 grid(ntiles_w, ntiles_h, nblocks);
 	//printf("num=%d, nblocks=%d, num_oc=%d\n", num, nblocks, num_oc);
 	//printf("height=%d, width=%d, output_h=%d, output_w=%d\n", height, width, output_h, output_w);
 	//printf("stride_h=%d, stride_w=%d, pad_h=%d, pad_width=%d\n", stride_h, stride_w, pad_h, pad_w);
 	if (dilation_h != 1 || dilation_w != 1) {
+		dim3 threads(TILE_W, TILE_H, OC_BLOCK);
+		dim3 grid(ntiles_w, ntiles_h, nblocks);
 		sconv_dilation<Dtype><<<grid, threads>>>(rowptr, colidx, values, input, 
 			height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
 			kernel_h, kernel_w, bias, output, num_oc, output_h, output_w);
-	} else {
+	} else if (stride_h == 1 && stride_w == 1 && height == width && kernel_h == kernel_w && pad_h == pad_w) {
 		if(FUSE_RELU) {
-#ifdef TILED_KERNEL
-			sconv_relu_tiled<Dtype><<<grid, threads>>>(rowptr, colidx, values, input, 
+			dim3 threads(16, 16, OC_BLOCK);
+			dim3 grid(ntiles_w, ntiles_h, nblocks);
+			sconv_relu_tiled<Dtype,16,16><<<grid, threads>>>(rowptr, colidx, values, input, 
 				height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
 				bias, output, num_oc, output_h, output_w);
-#else
+		} else {
+			if(num == 1) {
+				if(height == 27) {
+					ntiles_w = DIVIDE_INTO(output_w, 32);
+					ntiles_h = DIVIDE_INTO(output_h, 32);
+					dim3 grid(ntiles_w, ntiles_h, nblocks);
+					//dim3 threads(32, 8, 1);
+					//sconv_coarsened<Dtype,8,32,27,1><<<grid, threads>>>(rowptr, colidx, values, input, 
+					//	height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
+					//	bias, output, num_oc, output_h, output_w);
+					dim3 threads(32, 32, 1);
+					sconv_shm<Dtype,32,32><<<grid, threads>>>(rowptr, colidx, values, input, 
+						height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
+						bias, output, num_oc, output_h, output_w);
+				//} else(height == 13) {
+				} else {
+/*
+					const int nthreads = 256;
+					cudaDeviceProp deviceProp;
+					//CUDA_SAFE_CALL(cudaGetDeviceProperties(&deviceProp, 0));
+					const int nSM = 28;//deviceProp.multiProcessorCount;
+					//const int max_blocks_per_SM = maximum_residency(sconv_shm<Dtype,16,16>, nthreads, 0);
+					const int max_blocks_per_SM = 8;
+					const int max_blocks = max_blocks_per_SM * nSM;
+					nblocks = std::min(max_blocks, nblocks);
+					//printf("Launching CUDA solver: %d CTAs (max %d/SM), %d threads/CTA ...\n", nblocks, max_blocks_per_SM, nthreads);
+//*/	
+					dim3 threads(TILE_W, TILE_H, 1);
+					dim3 grid(ntiles_w, ntiles_h, nblocks);
+					sconv_shm<Dtype,16,16><<<grid, threads>>>(rowptr, colidx, values, input, 
+						height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
+						bias, output, num_oc, output_h, output_w);
+				}
+			} else {
+				dim3 threads(16, 16, 1);
+				//if(nblocks >= 128 && nblocks < 224) {
+				if(0) {
+					nblocks = (num/1) * ((num_oc - 1) / OC_BLOCK + 1);
+					dim3 grid(ntiles_w, ntiles_h, nblocks);
+					sconv_batch_tiled<Dtype,1,16,16,56,1><<<grid, threads>>>(rowptr, colidx, values, input, 
+						ifmap_size, height, width, pad_h, pad_w, stride_h, stride_w, 
+						kernel_h, kernel_w, bias, output, num_oc, output_h, output_w);
+				} else {	
+					nblocks = (num/8) * ((num_oc - 1) / OC_BLOCK + 1);
+					dim3 grid(ntiles_w, ntiles_h, nblocks);
+					sconv_batch_tiled<Dtype,8,16,16,56,1><<<grid, threads>>>(rowptr, colidx, values, input, 
+						ifmap_size, height, width, pad_h, pad_w, stride_h, stride_w, 
+						kernel_h, kernel_w, bias, output, num_oc, output_h, output_w);
+				}
+			}
+		}
+	} else {
+		// fall through to the default path
+		dim3 threads(TILE_W, TILE_H, OC_BLOCK);
+		dim3 grid(ntiles_w, ntiles_h, nblocks);
+		if(FUSE_RELU) {
 			sconv_relu_base<Dtype><<<grid, threads>>>(rowptr, colidx, values, input, 
 				height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
 				bias, output, num_oc, output_h, output_w);
-#endif
-
 		} else {
-#ifdef TILED_KERNEL
-			if(num == 1)
-				sconv_tiled<Dtype><<<grid, threads>>>(rowptr, colidx, values, input, 
-					height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
-					bias, output, num_oc, output_h, output_w);
-			else
-				sconv_batch_tiled<Dtype><<<grid, threads>>>(rowptr, colidx, values, input, 
-					ifmap_size, height, width, pad_h, pad_w, stride_h, stride_w, 
-					kernel_h, kernel_w, bias, output, num_oc, output_h, output_w);
-#else
 			if(num == 1)
 				sconv_base<Dtype><<<grid, threads>>>(rowptr, colidx, values, input, 
 					height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
 					bias, output, num_oc, output_h, output_w);
-			else
+			else {
+				nblocks = num * ((num_oc - 1) / OC_BLOCK + 1);
 				sconv_batch_base<Dtype><<<grid, threads>>>(rowptr, colidx, values, input, 
 					ifmap_size, height, width, pad_h, pad_w, stride_h, stride_w, 
 					kernel_h, kernel_w, bias, output, num_oc, output_h, output_w);
-#endif
+			}
 		}
 	}
 	CudaTest("sconv_kernel solving failed");

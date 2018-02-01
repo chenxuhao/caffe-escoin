@@ -26,9 +26,7 @@ void ConvolutionReLULayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom
     }
   }
   timer.Stop();
-  LOG(INFO) << this->layer_param().name() << " (Forward_gpu): "
-	  << timer.MilliSeconds() << " ms";
-  //printf("[cxh] %s: %.2f ms\n", this->layer_param().name().c_str(), timer.MicroSeconds()/1000);
+  printf("[cxh] %s: %.2f ms\n", this->layer_param().name().c_str(), timer.MicroSeconds()/1000);
 }
 
 template <typename Dtype>

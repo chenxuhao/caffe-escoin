@@ -16,6 +16,8 @@ __global__ void ReLUForward(const int n, const Dtype* in, Dtype* out,
 template <typename Dtype>
 void ReLULayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
     const vector<Blob<Dtype>*>& top) {
+  Timer timer;
+  timer.Start();
   const Dtype* bottom_data = bottom[0]->gpu_data();
   Dtype* top_data = top[0]->mutable_gpu_data();
   const int count = bottom[0]->count();
@@ -29,6 +31,8 @@ void ReLULayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
   //     << " top_data: " << (unsigned long)top_data
   //     << " blocks: " << CAFFE_GET_BLOCKS(count)
   //     << " threads: " << CAFFE_CUDA_NUM_THREADS;
+  timer.Stop();
+  //printf("[cxh] %s: %.2f ms\n", this->layer_param().name().c_str(), timer.MicroSeconds()/1000);
 }
 
 template <typename Dtype>
