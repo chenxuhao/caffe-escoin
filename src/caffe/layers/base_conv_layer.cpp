@@ -785,12 +785,12 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv(const Dtype* input, const Dt
 		if (std::string(this->type()) == "ConvolutionReLU") {
 			caffe_gpu_sconv<Dtype>(true, 1, input, ifmap_size, rowptr, colidx, values, bias,
 				height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w,
-				kernel_h, kernel_w, output + output_offset_ * g, num_oc);
+				kernel_h, kernel_w, output + output_offset_ * g, num_oc, group_);
 		//} else if (std::string(this->type()) == "Convolution") {
 		} else {
 			caffe_gpu_sconv<Dtype>(false, 1, input, ifmap_size, rowptr, colidx, values, bias,
 				height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
-				kernel_h, kernel_w, output + output_offset_ * g, num_oc);
+				kernel_h, kernel_w, output + output_offset_ * g, num_oc, group_);
 		}
 	}
 }
@@ -838,7 +838,7 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv_par(const Dtype* input, cons
 		const Dtype *values = nz_weight_values_.gpu_data()+ weight_offset_ * g;
 		caffe_gpu_sconv<Dtype>(false, num_, input, ifmap_size, rowptr, colidx, values,
 			bias, height, width, pad_h, pad_w, stride_h, stride_w, dilation_h, dilation_w, 
-			kernel_h, kernel_w, output + output_offset_ * g, num_oc);
+			kernel_h, kernel_w, output + output_offset_ * g, num_oc, group_);
 	}
 	for (int n = 0; n < num_; ++n) {
 		if (bias_term_) forward_gpu_bias(output + n * top_dim_, bias);

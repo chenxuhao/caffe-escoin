@@ -525,13 +525,13 @@ template <typename Dtype, int FMAP_BLOCK, int TILE_H, int TILE_W, int WIDTH, int
 __global__ void sconv_batch_tiled(const int * rowptr, const int * colidx, const Dtype * values, 
 		const Dtype * __restrict__ input, const int ifmap_size, const int height, const int width, 
 		const int pad_h, const int pad_w, const int stride_h, const int stride_w, const int kernel_h, const int kernel_w,
-		const Dtype *bias, Dtype *output, const int num_oc, const int output_h, const int output_w) {
+		const Dtype *bias, Dtype *output, const int num_oc, const int output_h, const int output_w, const int num_groups) {
 	const int output_row = blockIdx.y * blockDim.y + threadIdx.y;
 	const int output_col = blockIdx.x * blockDim.x + threadIdx.x;
 	const int zid = blockIdx.z * blockDim.z + threadIdx.z;
 	const int oc = zid % num_oc; // the output channel id
 	const int fmap_id = zid / num_oc; // the feature map id
-	const int ofmap_size = output_h * output_w * num_oc;
+	const int ofmap_size = output_h * output_w * num_oc * num_groups;
 	
 	__shared__ Dtype values_s[SHMEM_SIZE];
 	__shared__ int colidx_s[SHMEM_SIZE];
@@ -563,13 +563,13 @@ __global__ void sconv_batch_tiled(const int * rowptr, const int * colidx, const 
 		for(int k = 0; k < FMAP_BLOCK; k ++) {
 			if (output_row < output_h) {
 				if (output_col < output_w) {
-					const Dtype *ifmap = input + (fmap_id * FMAP_BLOCK) * ifmap_size;
+					const Dtype *ifmap = input + (fmap_id * FMAP_BLOCK) * ifmap_size * num_groups;
 					const Dtype *in_ptr = ifmap + output_row * stride_h * (width + pad_w) + output_col * stride_w;
 					int end = MIN(SHMEM_SIZE, length - i);
-					for (int offset = 0; offset < end; ++ offset) { 
+					for (int offset = 0; offset < end; ++ offset) {
 						Dtype weight = values_s[offset];
 						int pos = colidx_s[offset];
-						sum[k] += weight * __ldg(in_ptr + pos + k * ifmap_size);
+						sum[k] += weight * __ldg(in_ptr + pos + k * ifmap_size * num_groups);
 					}
 				}
 			}
@@ -590,7 +590,7 @@ __global__ void sconv_batch_tiled(const int * rowptr, const int * colidx, const 
 template <typename Dtype>
 void caffe_gpu_sconv(bool FUSE_RELU, int num, const Dtype *input, const int ifmap_size, const int *rowptr, 
 	const int *colidx, const Dtype *values, const Dtype *bias, int height, int width, int pad_h, int pad_w, 
-	int stride_h, int stride_w, int dilation_h, int dilation_w, int kernel_h, int kernel_w, Dtype *output, int num_oc) 
+	int stride_h, int stride_w, int dilation_h, int dilation_w, int kernel_h, int kernel_w, Dtype *output, int num_oc, int num_groups)
 {
 	//print_device_info(0);
 	const int output_h = (height + 2 * pad_h - (dilation_h * (kernel_h - 1) + 1)) / stride_h + 1;
@@ -657,15 +657,15 @@ void caffe_gpu_sconv(bool FUSE_RELU, int num, const Dtype *input, const int ifma
 				if(0) {
 					nblocks = (num/1) * ((num_oc - 1) / OC_BLOCK + 1);
 					dim3 grid(ntiles_w, ntiles_h, nblocks);
-					sconv_batch_tiled<Dtype,1,16,16,56,1><<<grid, threads>>>(rowptr, colidx, values, input, 
-						ifmap_size, height, width, pad_h, pad_w, stride_h, stride_w, 
-						kernel_h, kernel_w, bias, output, num_oc, output_h, output_w);
+					sconv_batch_tiled<Dtype,1,16,16,56,1><<<grid, threads>>>(rowptr, colidx, values, 
+						input, ifmap_size, height, width, pad_h, pad_w, stride_h, stride_w, 
+						kernel_h, kernel_w, bias, output, num_oc, output_h, output_w, num_groups);
 				} else {	
 					nblocks = (num/2) * ((num_oc - 1) / OC_BLOCK + 1);
 					dim3 grid(ntiles_w, ntiles_h, nblocks);
-					sconv_batch_tiled<Dtype,2,16,16,56,1><<<grid, threads>>>(rowptr, colidx, values, input, 
-						ifmap_size, height, width, pad_h, pad_w, stride_h, stride_w, 
-						kernel_h, kernel_w, bias, output, num_oc, output_h, output_w);
+					sconv_batch_tiled<Dtype,2,16,16,56,1><<<grid, threads>>>(rowptr, colidx, values, 
+						input, ifmap_size, height, width, pad_h, pad_w, stride_h, stride_w, 
+						kernel_h, kernel_w, bias, output, num_oc, output_h, output_w, num_groups);
 				}
 			}
 		}
@@ -695,13 +695,13 @@ void caffe_gpu_sconv(bool FUSE_RELU, int num, const Dtype *input, const int ifma
 
 template void caffe_gpu_sconv<int>(bool FUSE_RELU, int num, const int *input, const int ifmap_size, const int *rowptr, 
 		const int *colidx, const int *values, const int *bias, int height, int width, int pad_h, int pad_w, 
-		int stride_h, int stride_w, int dilation_h, int dilation_w, int kernel_h, int kernel_w, int *output, int num_oc);
+		int stride_h, int stride_w, int dilation_h, int dilation_w, int kernel_h, int kernel_w, int *output, int num_oc, int num_groups);
 template void caffe_gpu_sconv<float>(bool FUSE_RELU, int num, const float *input, const int ifmap_size, const int *rowptr, 
 		const int *colidx, const float *values, const float *bias, int height, int width, int pad_h, int pad_w, 
-		int stride_h, int stride_w, int dilation_h, int dilation_w, int kernel_h, int kernel_w, float *output, int num_oc);
+		int stride_h, int stride_w, int dilation_h, int dilation_w, int kernel_h, int kernel_w, float *output, int num_oc, int num_groups);
 template void caffe_gpu_sconv<double>(bool FUSE_RELU, int num, const double *input, const int ifmap_size, const int *rowptr, 
 		const int *colidx, const double *values, const double *bias, int height, int width, int pad_h, int pad_w, 
-		int stride_h, int stride_w, int dilation_h, int dilation_w, int kernel_h, int kernel_w, double *output, int num_oc);
+		int stride_h, int stride_w, int dilation_h, int dilation_w, int kernel_h, int kernel_w, double *output, int num_oc, int num_groups);
 
 __global__ void stretch_kernel(const int *rowptr, int *colidx, int M,
 		int height, int width, int pad_h, int pad_w, int kernel_h, int kernel_w) {
