@@ -601,7 +601,6 @@ void caffe_gpu_sconv(bool FUSE_RELU, int num, const Dtype *input, const int ifma
 	int ntiles_h = (output_h - 1) / TILE_H + 1;
 	int ntiles_w = (output_w - 1) / TILE_W + 1;
 	int nblocks = (num_oc - 1) / OC_BLOCK + 1;
-	if(num != 1)
 	//printf("num=%d, nblocks=%d, num_oc=%d\n", num, nblocks, num_oc);
 	//printf("height=%d, width=%d, output_h=%d, output_w=%d\n", height, width, output_h, output_w);
 	//printf("stride_h=%d, stride_w=%d, pad_h=%d, pad_width=%d\n", stride_h, stride_w, pad_h, pad_w);
@@ -620,7 +619,8 @@ void caffe_gpu_sconv(bool FUSE_RELU, int num, const Dtype *input, const int ifma
 				bias, output, num_oc, output_h, output_w);
 		} else {
 			if(num == 1) {
-				if(height == 27) {
+				//if(height == 27) {
+				if(0) {
 					ntiles_w = DIVIDE_INTO(output_w, 32);
 					ntiles_h = DIVIDE_INTO(output_h, 32);
 					dim3 grid(ntiles_w, ntiles_h, nblocks);
@@ -661,9 +661,9 @@ void caffe_gpu_sconv(bool FUSE_RELU, int num, const Dtype *input, const int ifma
 						ifmap_size, height, width, pad_h, pad_w, stride_h, stride_w, 
 						kernel_h, kernel_w, bias, output, num_oc, output_h, output_w);
 				} else {	
-					nblocks = (num/8) * ((num_oc - 1) / OC_BLOCK + 1);
+					nblocks = (num/2) * ((num_oc - 1) / OC_BLOCK + 1);
 					dim3 grid(ntiles_w, ntiles_h, nblocks);
-					sconv_batch_tiled<Dtype,8,16,16,56,1><<<grid, threads>>>(rowptr, colidx, values, input, 
+					sconv_batch_tiled<Dtype,2,16,16,56,1><<<grid, threads>>>(rowptr, colidx, values, input, 
 						ifmap_size, height, width, pad_h, pad_w, stride_h, stride_w, 
 						kernel_h, kernel_w, bias, output, num_oc, output_h, output_w);
 				}
