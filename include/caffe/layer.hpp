@@ -434,7 +434,6 @@ class Layer {
 template <typename Dtype>
 inline Dtype Layer<Dtype>::Forward(const vector<Blob<Dtype>*>& bottom,
     const vector<Blob<Dtype>*>& top) {
-  //Lock();
   Dtype loss = 0;
   Timer timer;
   Reshape(bottom, top);
@@ -471,7 +470,6 @@ inline Dtype Layer<Dtype>::Forward(const vector<Blob<Dtype>*>& bottom,
     LOG(FATAL) << "Unknown caffe mode.";
   }
   test_time_ = timer.MicroSeconds();
-  //Unlock();
   //printf("[cxh] %s: %.2f ms\n", layer_param_.name().c_str(), (test_time_/1000));
   return loss;
 }

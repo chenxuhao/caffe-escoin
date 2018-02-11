@@ -308,6 +308,11 @@ int test() {
   vector<int> test_score_output_id;
   vector<float> test_score;
   float loss = 0;
+  double fc_time = 0.0;
+  double data_time = 0.0;
+  double conv_time = 0.0;
+  double other_time = 0.0;
+  double total_time = 0.0;
   for (int i = 0; i < FLAGS_iterations; ++i) {
     float iter_loss;
     const vector<Blob<float>*>& result =
@@ -330,7 +335,13 @@ int test() {
 		printf("[cxh] Batch %d, %s = %.5f\n", i, output_name.c_str(), score);
       }
     }
+    printf("[cxh] Total CONV time: %.2f ms\n", caffe_net.GetConvTime()/1000);
     printf("[cxh] Total forwarding time: %.2f ms\n", caffe_net.GetTotalTime()/1000);
+	fc_time += caffe_net.GetFcTime()/1000;
+	data_time += caffe_net.GetDataTime()/1000;
+	conv_time += caffe_net.GetConvTime()/1000;
+	other_time += caffe_net.GetOtherTime()/1000;
+	total_time += caffe_net.GetTotalTime()/1000;
   }
   loss /= FLAGS_iterations;
   LOG(INFO) << "Loss: " << loss;
@@ -349,6 +360,11 @@ int test() {
     LOG(INFO) << output_name << " = " << mean_score << loss_msg_stream.str();
 	printf("[cxh] %s = %.4f%s\n", output_name.c_str(), mean_score, loss_msg_stream.str().c_str());
   }
+  printf("[cxh] fc_time: %.3f\n", fc_time);
+  printf("[cxh] data_time: %.3f\n", data_time);
+  printf("[cxh] conv_time: %.3f\n", conv_time);
+  printf("[cxh] other_time: %.3f\n", other_time);
+  printf("[cxh] total_time: %.3f\n", total_time);
   return 0;
 }
 RegisterBrewFunction(test);

@@ -7,7 +7,6 @@ namespace caffe {
 template <typename Dtype>
 void ConvolutionLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
       const vector<Blob<Dtype>*>& top) {
-  //compute_time = 0; copy_time = 0;
   Timer timer;
   timer.Start();
   const Dtype* weight = this->blobs_[0]->gpu_data();
@@ -37,10 +36,7 @@ void ConvolutionLayer<Dtype>::Forward_gpu(const vector<Blob<Dtype>*>& bottom,
     }
   }
   timer.Stop();
-  LOG(INFO) << this->layer_param().name() << " (Forward_gpu): "
-	  << timer.MilliSeconds() << " ms";
   //printf("[cxh] %s: %.2f ms\n", this->layer_param().name().c_str(), timer.MicroSeconds()/1000);
-  //printf("\t compute time: %.2f ms, copy time: %.2f ms\n", compute_time, copy_time);
 }
 
 template <typename Dtype>

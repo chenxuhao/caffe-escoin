@@ -228,6 +228,10 @@ class Net {
       const string& layer_name);
 
   // cxh
+  double GetFcTime();
+  double GetDataTime();
+  double GetConvTime();
+  double GetOtherTime();
   double GetTotalTime();
 
   // Invoked at specific points during an iteration

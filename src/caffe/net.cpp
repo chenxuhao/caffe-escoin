@@ -514,6 +514,47 @@ void Net<Dtype>::AppendParam(const NetParameter& param, const int layer_id,
 }
 
 template <typename Dtype>
+double Net<Dtype>::GetDataTime(){
+	double total = 0;
+	for (int i = 0; i <=layers_.size() - 1; ++i) {
+		if(layers_[i]->type() == "Data" || layers_[i]->type() == "Dropout" || layers_[i]->type() == "Accuracy" || layers_[i]->type() == "SoftmaxWithLoss")
+			total += layers_[i]->GetTestTime();
+	}
+	return total;
+}
+
+template <typename Dtype>
+double Net<Dtype>::GetOtherTime(){
+	double total = 0;
+	// Concat is for GoogLeNet, BatchNorm, Scale and Eltwise are for ResNet
+	for (int i = 0; i <=layers_.size() - 1; ++i) {
+		if(layers_[i]->type() == "Pooling" || layers_[i]->type() == "ReLU" || layers_[i]->type() == "LRN" || layers_[i]->type() == "BatchNorm" || layers_[i]->type() == "Scale" || layers_[i]->type() == "Eltwise" || layers_[i]->type() == "Concat")
+			total += layers_[i]->GetTestTime();
+	}
+	return total;
+}
+
+template <typename Dtype>
+double Net<Dtype>::GetFcTime(){
+	double total = 0;
+	for (int i = 0; i <=layers_.size() - 1; ++i) {
+		if(layers_[i]->type() == "InnerProduct")
+			total += layers_[i]->GetTestTime();
+	}
+	return total;
+}
+
+template <typename Dtype>
+double Net<Dtype>::GetConvTime(){
+	double total = 0;
+	for (int i = 0; i <=layers_.size() - 1; ++i) {
+		if(layers_[i]->type() == "Convolution")
+			total += layers_[i]->GetTestTime();
+	}
+	return total;
+}
+
+template <typename Dtype>
 double Net<Dtype>::GetTotalTime(){
 	double total = 0;
 	for (int i = 0; i <=layers_.size() - 1; ++i) {
