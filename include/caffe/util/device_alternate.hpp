@@ -39,6 +39,9 @@ void classname<Dtype>::funcname##_##gpu(const vector<Blob<Dtype>*>& top, \
 #ifdef USE_CUDNN  // cuDNN acceleration library.
 #include "caffe/util/cudnn.hpp"
 #endif
+#ifdef USE_ESC  // cxh
+#include "caffe/util/esc.hpp"
+#endif
 #include <cusparse.h> // cxh
 //
 // CUDA macros

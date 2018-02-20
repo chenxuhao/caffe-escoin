@@ -324,6 +324,12 @@ else
 	COMMON_FLAGS += -DNDEBUG -O2
 endif
 
+# cxh
+ifeq ($(USE_ESC), 1)
+	LIBRARIES += cudnn
+	COMMON_FLAGS += -DUSE_ESC
+endif
+
 # cuDNN acceleration configuration.
 ifeq ($(USE_CUDNN), 1)
 	LIBRARIES += cudnn
