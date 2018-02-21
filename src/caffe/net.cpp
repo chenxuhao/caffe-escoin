@@ -513,6 +513,7 @@ void Net<Dtype>::AppendParam(const NetParameter& param, const int layer_id,
   }
 }
 
+// cxh
 template <typename Dtype>
 double Net<Dtype>::GetDataTime(){
 	double total = 0;
@@ -548,7 +549,7 @@ template <typename Dtype>
 double Net<Dtype>::GetConvTime(){
 	double total = 0;
 	for (int i = 0; i <=layers_.size() - 1; ++i) {
-		if(layers_[i]->type() == "Convolution")
+		if(layers_[i]->type() == "Convolution" || layers_[i]->type() == "EscConvolution")
 			total += layers_[i]->GetTestTime();
 	}
 	return total;
