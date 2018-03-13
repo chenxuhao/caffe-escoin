@@ -329,6 +329,7 @@ ifeq ($(USE_ESC), 1)
 	LIBRARIES += cudnn
 	COMMON_FLAGS += -DUSE_ESC
 endif
+NVCCFLAGS += -lineinfo
 
 # cuDNN acceleration configuration.
 ifeq ($(USE_CUDNN), 1)

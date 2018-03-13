@@ -261,19 +261,19 @@ __global__ void sconv_batch_base(const int *rowptr, const int *colidx, const Dty
 #define REG_BLOCK_W 1
 #define COARSEN 4
 
-template <typename Dtype, int TILE_H, int TILE_W>
+template <typename Dtype, int TILE_W, int TILE_H>
 __global__ void sconv_shm(const int * rowptr, const int * colidx, const Dtype * values, 
 		const Dtype * __restrict__ input, const int height, const int width, const int pad_h, const int pad_w, 
 		const int stride_h, const int stride_w, const int kernel_h, const int kernel_w, const Dtype *bias,
 		Dtype *output, const int num_oc, const int output_h, const int output_w) {
 	const int output_row = blockIdx.y * blockDim.y + threadIdx.y;
 	const int output_col = blockIdx.x * blockDim.x + threadIdx.x;
-	const int oc_id = blockIdx.z * blockDim.z + threadIdx.z;
+	const int oc = blockIdx.z * blockDim.z + threadIdx.z;
 	__shared__ Dtype values_s[SHMEM_SIZE];
 	__shared__ int colidx_s[SHMEM_SIZE];
 	const int tid = threadIdx.y * TILE_W + threadIdx.x;
 
-	for(int oc = oc_id; oc < num_oc; oc += gridDim.z) {
+	//for(int oc = oc_id; oc < num_oc; oc += gridDim.z) {
 	const int row_start = rowptr[oc];
 	const int row_end = rowptr[oc+1];
 	const int length = row_end - row_start;
@@ -315,7 +315,7 @@ __global__ void sconv_shm(const int * rowptr, const int * colidx, const Dtype * 
 				output[(oc * output_h + output_row) * output_w + output_col] = sum;
 			}
 		}
-	}
+	//}
 }
 
 template <typename Dtype, int TILE_H, int TILE_W, int WIDTH, int K, int PAD = (K - 1) / 2>
@@ -619,17 +619,17 @@ void caffe_gpu_sconv(bool FUSE_RELU, int num, const Dtype *input, const int ifma
 				bias, output, num_oc, output_h, output_w);
 		} else {
 			if(num == 1) {
-				//if(height == 27) {
-				if(0) {
+				if(height == 27) {
+				//if(0) {
 					ntiles_w = DIVIDE_INTO(output_w, 32);
-					ntiles_h = DIVIDE_INTO(output_h, 32);
+					ntiles_h = DIVIDE_INTO(output_h, 8);
 					dim3 grid(ntiles_w, ntiles_h, nblocks);
 					//dim3 threads(32, 8, 1);
 					//sconv_coarsened<Dtype,8,32,27,1><<<grid, threads>>>(rowptr, colidx, values, input, 
 					//	height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
 					//	bias, output, num_oc, output_h, output_w);
-					dim3 threads(32, 32, 1);
-					sconv_shm<Dtype,32,32><<<grid, threads>>>(rowptr, colidx, values, input, 
+					dim3 threads(32, 8, 1);
+					sconv_shm<Dtype,32,8><<<grid, threads>>>(rowptr, colidx, values, input, 
 						height, width, pad_h, pad_w, stride_h, stride_w, kernel_h, kernel_w, 
 						bias, output, num_oc, output_h, output_w);
 				//} else(height == 13) {

@@ -23,7 +23,8 @@ void EscConvolutionLayer<Dtype>::Forward_gpu(
             bottom_descs_[i], bottom_data + bottom_offset_ * g,
             filter_desc_, weight + this->weight_offset_ * g,
             conv_descs_[i],
-            fwd_algo_[i], workspace[g], workspace_fwd_sizes_[i],
+            //fwd_algo_[i], workspace[g], workspace_fwd_sizes_[i],
+            CUDNN_CONVOLUTION_FWD_ALGO_IMPLICIT_GEMM, workspace[g], workspace_fwd_sizes_[i],
             cudnn::dataType<Dtype>::zero,
             top_descs_[i], top_data + top_offset_ * g));
 
