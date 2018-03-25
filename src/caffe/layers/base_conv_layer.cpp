@@ -747,7 +747,9 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 
 template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_gpu_sconv(const Dtype* input, const Dtype* weights, Dtype* output) {
-	if((Dtype)nz_num_[0] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_) > 0.5) {
+	Dtype density = (Dtype)nz_num_[0] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
+	//printf("sparsity=%f\n", (Dtype)1.0 - density);
+	if(density > 0.5) {
 		forward_gpu_gemm(input, weights, output);
 		return;
 	}
