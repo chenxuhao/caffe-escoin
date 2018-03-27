@@ -724,7 +724,7 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_gemm(const Dtype* input,
 	// start computation
 	for (int g = 0; g < group_; ++g) {
 		Dtype sparsity = (Dtype)1.0 - (Dtype)nz_num_[g] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
-		if(Caffe::conv_mode() == Caffe::LOWERED_SPARSE && sparsity > 0.5) {
+		if(Caffe::conv_mode() == Caffe::LOWERED_SPARSE && sparsity > 0.8) {
 			//printf("sparse weight matrix multi. dense feature map matrix, sparsity=%f\n", sparsity);
 			caffe_gpu_sparse_csrmm(conv_out_channels_ /group_,
 				conv_out_spatial_dim_, kernel_dim_, nz_num_[g], (Dtype)1., 
@@ -749,7 +749,7 @@ template <typename Dtype>
 void BaseConvolutionLayer<Dtype>::forward_gpu_sconv(const Dtype* input, const Dtype* weights, Dtype* output) {
 	Dtype density = (Dtype)nz_num_[0] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_);
 	//printf("sparsity=%f\n", (Dtype)1.0 - density);
-	if(density > 0.5) {
+	if(density > 0.2) {
 		forward_gpu_gemm(input, weights, output);
 		return;
 	}
@@ -802,7 +802,7 @@ void BaseConvolutionLayer<Dtype>::forward_gpu_sconv_par(const Dtype* input, cons
 	const Dtype* bias = NULL;
 	if (bias_term_)
 		bias = this->blobs_[1]->gpu_data();
-	if((Dtype)nz_num_[0] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_) > 0.5) {
+	if((Dtype)nz_num_[0] / (Dtype)(conv_out_channels_ / group_ * kernel_dim_) > 0.2) {
 		for (int n = 0; n < num_; ++n) {
 			forward_gpu_gemm(input + n * bottom_dim_, weights, output + n * top_dim_);
 			if (bias_term_) forward_gpu_bias(output + n * top_dim_, bias);
