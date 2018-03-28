@@ -1,0 +1,19 @@
+net: "models/convnet/train_val_full_convl1l2.prototxt"
+test_iter: 100
+test_interval: 1000
+#base_lr: 0.001
+momentum: 0.9
+#weight_decay: 0.004
+lr_policy: "multistep"
+gamma: 0.8
+stepvalue: 60000
+stepvalue: 65000
+
+display: 200
+max_iter: 70000
+
+regularization_type: "L1"
+snapshot: 10000
+#snapshot_format: HDF5
+#snapshot_prefix: "models/convnet/convnet_full"
+#solver_mode: GPU
