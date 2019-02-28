@@ -2,13 +2,17 @@
 
 Copyright 2018 Xuhao Chen, National University of Defense Technology
 
-This is Caffe branch for training sparse CNN that provides 80-95% sparsity in convolution and fully-connected layers (tested with AlexNet, GoogLeNet-v1, and Resnet-50). Please let us know if you're interested in this experimental feature. More details are described in the following paper:
+This is a Caffe branch for training sparse CNN on GPUs (tested with AlexNet, GoogLeNet-v1, and Resnet-50). Please let us know if you're interested in this experimental feature. More details are described in the following paper:
 
 https://arxiv.org/pdf/1802.10280, Escort: Efficient Sparse Convolutional Neural Networks on GPUs, Xuhao Chen
 
 For datasets, compilation and exection instructions, please got to [SkimCaffe](https://github.com/IntelLabs/SkimCaffe).
 
+Contact
+-----------
+
 [Xuhao Chen](https://chenxuhao.github.io)
+
 
 # Caffe
 
